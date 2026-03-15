@@ -1,6 +1,12 @@
-# SkyTracker Device
+<p align="center">
+  <img src="logo.png" alt="SkyTracker" width="120" />
+</p>
 
-Open-source on-device software that turns any Linux single-board computer with an RTL-SDR receiver into a real-time ADS-B aircraft tracker with a live radar display. Part of the [SkyTracker](https://skytracker.ai) platform.
+<h1 align="center">SkyTracker Device</h1>
+
+<p align="center">
+Open-source on-device software that turns any Linux single-board computer with an RTL-SDR receiver into a real-time ADS-B aircraft tracker with a live radar display. Part of the <a href="https://skytracker.ai">SkyTracker</a> platform.
+</p>
 
 ## Quick Start
 
