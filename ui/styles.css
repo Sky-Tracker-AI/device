@@ -1,0 +1,589 @@
+/* ============================================================
+   SkyTracker Display UI — styles.css
+   Dark aviation / radar aesthetic
+   Target: 1024x600 (7") up to 13" displays
+   ============================================================ */
+
+/* --- Reset & Base --- */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Background & surface */
+  --bg-primary: #0a0a0f;
+  --bg-surface: #111118;
+  --bg-panel: #14141c;
+  --bg-panel-alt: #1a1a24;
+  --bg-hover: #1e1e2a;
+  --bg-selected: #1c2a1c;
+
+  /* Text */
+  --text-primary: #f0f0f5;
+  --text-secondary: #a0a0b8;
+  --text-dim: #707088;
+  --text-accent: #60efff;
+
+  /* Radar */
+  --radar-bg: #080810;
+  --radar-grid: rgba(96, 239, 255, 0.08);
+  --radar-grid-major: rgba(96, 239, 255, 0.15);
+  --radar-sweep: rgba(96, 239, 255, 0.12);
+  --radar-center: rgba(96, 239, 255, 0.5);
+
+  /* Altitude colors */
+  --alt-cyan: #60efff;
+  --alt-purple: #a78bfa;
+  --alt-green: #34d399;
+  --alt-amber: #fbbf24;
+
+  /* Rarity */
+  --rarity-gold: #f5c842;
+  --rarity-legendary: #ff6b2b;
+
+  /* Network status */
+  --status-green: #34d399;
+  --status-gold: #f5c842;
+  --status-gray: #555570;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-accent: rgba(96, 239, 255, 0.15);
+
+  /* Sizing */
+  --sidebar-width: 50%;
+
+  font-size: 24px;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  cursor: none;
+}
+
+/* --- Layout --- */
+.layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Radar Container --- */
+.radar-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--radar-bg);
+  border-right: 0.07rem solid var(--border-subtle);
+}
+
+.radar-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: 18rem;
+  max-width: 28rem;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+}
+
+/* --- Network Status --- */
+.network-status {
+  position: fixed;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 1rem;
+  z-index: 100;
+  font-size: 0.65rem;
+  letter-spacing: 0.03rem;
+  text-transform: uppercase;
+}
+
+.network-status.hidden {
+  display: none;
+}
+
+.network-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--status-gray);
+  flex-shrink: 0;
+}
+
+.network-status.sharing .network-dot {
+  background: var(--status-green);
+  box-shadow: 0 0 0.4rem var(--status-green);
+}
+
+.network-status.ai-online .network-dot {
+  background: var(--status-gold);
+  box-shadow: 0 0 0.4rem var(--status-gold);
+}
+
+.network-status.wifi-only .network-dot {
+  background: var(--status-gray);
+}
+
+.network-label {
+  color: var(--text-secondary);
+}
+
+/* --- Station Name --- */
+.station-name {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.75rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.12rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  z-index: 100;
+}
+
+/* --- Aircraft Count --- */
+.aircraft-count {
+  position: fixed;
+  bottom: 0.5rem;
+  left: 0.75rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.05rem;
+  color: var(--text-dim);
+  z-index: 100;
+}
+
+/* --- Detail Panel (closest aircraft) --- */
+.detail-panel {
+  padding: 0.75rem 1rem;
+  border-bottom: 0.07rem solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.15rem;
+}
+
+.detail-callsign {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.08rem;
+  color: var(--text-accent);
+}
+
+.detail-rarity-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.75rem;
+  background: rgba(245, 200, 66, 0.15);
+  border: 0.07rem solid rgba(245, 200, 66, 0.3);
+  color: var(--rarity-gold);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.detail-rarity-badge.legendary {
+  background: rgba(255, 107, 43, 0.15);
+  border-color: rgba(255, 107, 43, 0.4);
+  color: var(--rarity-legendary);
+}
+
+.rarity-star {
+  font-size: 0.8rem;
+}
+
+.detail-type {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  margin-bottom: 0.1rem;
+}
+
+.detail-airline {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.4rem;
+}
+
+.detail-divider {
+  height: 0.07rem;
+  background: var(--border-subtle);
+  margin-bottom: 0.4rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 0.3rem;
+}
+
+.detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.detail-label {
+  font-size: 0.5rem;
+  letter-spacing: 0.1rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.detail-value {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* --- Aircraft List --- */
+.list-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 0.07rem solid var(--border-subtle);
+}
+
+.list-title {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.list-sort {
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06rem;
+}
+
+.list-columns {
+  display: flex;
+  align-items: center;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.5rem;
+  letter-spacing: 0.08rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 0.07rem solid var(--border-subtle);
+  background: var(--bg-panel-alt);
+}
+
+.col-callsign { flex: 2.5; }
+.col-type { flex: 1.5; }
+.col-alt { flex: 1.2; text-align: right; }
+.col-spd { flex: 1; text-align: right; }
+.col-dist { flex: 1; text-align: right; }
+
+.list-body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-accent) transparent;
+}
+
+.list-body::-webkit-scrollbar {
+  width: 0.25rem;
+}
+
+.list-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.list-body::-webkit-scrollbar-thumb {
+  background: var(--border-accent);
+  border-radius: 0.125rem;
+}
+
+/* Aircraft row */
+.aircraft-row {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  border-bottom: 0.07rem solid rgba(255, 255, 255, 0.02);
+  transition: background 0.15s ease;
+}
+
+.aircraft-row:hover {
+  background: var(--bg-hover);
+}
+
+.aircraft-row.selected {
+  background: var(--bg-selected);
+  border-left: 0.15rem solid var(--text-accent);
+  padding-left: calc(0.75rem - 0.15rem);
+}
+
+.aircraft-row .col-callsign {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.aircraft-row .col-type {
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+}
+
+.aircraft-row .col-alt {
+  font-weight: 500;
+  font-size: 0.65rem;
+}
+
+.aircraft-row .col-spd {
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+}
+
+.aircraft-row .col-dist {
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+}
+
+/* Altitude-colored text in list */
+.aircraft-row .alt-cyan { color: var(--alt-cyan); }
+.aircraft-row .alt-purple { color: var(--alt-purple); }
+.aircraft-row .alt-green { color: var(--alt-green); }
+.aircraft-row .alt-amber { color: var(--alt-amber); }
+
+/* Rarity badge in list */
+.list-rarity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: rgba(245, 200, 66, 0.2);
+  color: var(--rarity-gold);
+  font-size: 0.5rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.list-rarity.legendary {
+  background: rgba(255, 107, 43, 0.25);
+  color: var(--rarity-legendary);
+  box-shadow: 0 0 0.4rem rgba(255, 107, 43, 0.2);
+}
+
+/* --- Night Mode --- */
+body.night-mode {
+  --bg-primary: #050508;
+  --bg-surface: #0a0a10;
+  --bg-panel: #0c0c14;
+  --bg-panel-alt: #0e0e16;
+  --bg-hover: #12121c;
+  --bg-selected: #101810;
+  --text-primary: #a0a0a8;
+  --text-secondary: #606070;
+  --text-dim: #404050;
+  --text-accent: #408899;
+  --radar-bg: #040408;
+  --radar-grid: rgba(96, 239, 255, 0.04);
+  --radar-grid-major: rgba(96, 239, 255, 0.08);
+  --radar-sweep: rgba(96, 239, 255, 0.06);
+  --radar-center: rgba(96, 239, 255, 0.3);
+  --alt-cyan: #408eaa;
+  --alt-purple: #7a64b0;
+  --alt-green: #288a6e;
+  --alt-amber: #b08820;
+}
+
+body.night-mode .detail-callsign {
+  color: var(--text-accent);
+}
+
+/* --- Responsive --- */
+@media (min-width: 1280px) {
+  :root {
+    font-size: 15px;
+  }
+}
+
+@media (min-width: 1600px) {
+  :root {
+    font-size: 16px;
+  }
+}
+
+@media (max-height: 500px) {
+  .detail-panel {
+    --detail-height: 40%;
+    padding: 0.6rem;
+  }
+
+  .detail-grid {
+    gap: 0.3rem 0.6rem;
+  }
+}
+
+/* --- Animations --- */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.network-dot {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+/* --- Setup / Claim Overlay --- */
+.setup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setup-overlay.hidden {
+  display: none;
+}
+
+.setup-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  text-align: center;
+  max-width: 24rem;
+}
+
+.setup-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.06rem;
+  color: var(--text-primary);
+}
+
+.setup-subtitle {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  max-width: 20rem;
+}
+
+.setup-qr {
+  padding: 1rem;
+  background: rgba(96, 239, 255, 0.04);
+  border: 0.07rem solid var(--border-accent);
+  border-radius: 0.75rem;
+}
+
+.setup-qr canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.setup-code {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.25rem;
+  color: #f7ce3e;
+  font-family: inherit;
+}
+
+.setup-hint {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  margin-top: 0.5rem;
+}
+
+.setup-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
+
+.setup-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 0.15rem solid var(--border-accent);
+  border-top-color: var(--text-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Connection lost overlay */
+.connection-lost {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.4rem 1rem;
+  background: rgba(255, 60, 60, 0.15);
+  border: 0.07rem solid rgba(255, 60, 60, 0.3);
+  border-radius: 0.5rem;
+  color: #ff6b6b;
+  font-size: 0.65rem;
+  letter-spacing: 0.05rem;
+  z-index: 200;
+  display: none;
+}
+
+.connection-lost.visible {
+  display: block;
+}

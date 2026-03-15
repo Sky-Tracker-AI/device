@@ -1,0 +1,30 @@
+# Build outputs
+agent
+skytracker-agent-*
+mock-dump1090-*
+*.exe
+
+# Database files
+data/enrichment.db
+
+# Runtime state
+state.json
+queue.db
+*.db-journal
+*.db-wal
+
+# Config with real credentials
+/etc/skytracker/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Go
+vendor/

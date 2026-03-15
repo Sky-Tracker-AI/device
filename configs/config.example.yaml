@@ -1,0 +1,63 @@
+# SkyTracker Device Configuration
+# ================================
+# Copy this file to /etc/skytracker/config.yaml or ~/.skytracker/config.yaml
+# The agent checks user-level config first, then system-level, then defaults.
+
+# ── Station identity ─────────────────────────────────────────────────────────
+
+station:
+  # Display name for this station (shown on skytracker.ai if shared)
+  name: "My SkyTracker"
+
+  # Sharing mode: private | unlisted | public
+  #   private  — data stays on-device only (default)
+  #   unlisted — shared with skytracker.ai but not listed on the public map
+  #   public   — visible on the community map at skytracker.ai/map
+  sharing: private
+
+# ── skytracker.ai connection ─────────────────────────────────────────────────
+
+platform:
+  # API key for skytracker.ai (issued during device claim; leave blank for offline-only)
+  api_key: ""
+
+  # Platform API endpoint
+  endpoint: "https://api.skytracker.ai"
+
+# ── Display settings ─────────────────────────────────────────────────────────
+
+display:
+  # Port for the local web server that serves the radar UI
+  port: 8080
+
+  # Display brightness (0–100)
+  brightness: 100
+
+  # Night mode dims the display on a schedule
+  night_mode:
+    enabled: true
+    start: "21:00"   # 24-hour format
+    end: "06:00"     # 24-hour format
+
+# ── Data sources ─────────────────────────────────────────────────────────────
+
+sources:
+  # URL where dump1090-fa serves aircraft data
+  # Default assumes dump1090-fa runs on the same device on port 8080
+  dump1090_url: "http://localhost:8080/data/aircraft.json"
+
+  # gpsd connection (reads GPS position from USB dongle)
+  gpsd_host: "localhost"
+  gpsd_port: 2947
+
+# ── Advanced settings ────────────────────────────────────────────────────────
+
+advanced:
+  # How often to poll dump1090 for aircraft data (milliseconds)
+  poll_interval_ms: 1000
+
+  # Maximum display range in nautical miles
+  max_range_nm: 250
+
+  # Maximum size of the offline data queue (MB) before oldest entries are dropped
+  data_queue_max_mb: 100

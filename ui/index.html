@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1024, initial-scale=1.0">
+  <title>SkyTracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Setup / Claim overlay -->
+  <div id="setup-overlay" class="setup-overlay">
+    <div class="setup-content"></div>
+  </div>
+
+  <!-- Network status indicator -->
+  <div id="network-status" class="network-status hidden">
+    <span class="network-dot"></span>
+    <span class="network-label"></span>
+  </div>
+
+  <!-- Station name -->
+  <div id="station-name" class="station-name">SkyTracker</div>
+
+  <!-- Aircraft count -->
+  <div id="aircraft-count" class="aircraft-count">0 aircraft</div>
+
+  <div class="layout">
+    <!-- Left: Radar Display -->
+    <div class="radar-container">
+      <canvas id="radar-canvas"></canvas>
+    </div>
+
+    <!-- Right panels -->
+    <div class="sidebar">
+      <!-- Closest aircraft detail (auto-populated) -->
+      <div class="detail-panel" id="detail-panel">
+        <div class="detail-empty" id="detail-empty">
+          <div class="detail-empty-text">No aircraft in range</div>
+        </div>
+        <div class="detail-content hidden" id="detail-content">
+          <div class="detail-header">
+            <div class="detail-callsign" id="detail-callsign"></div>
+            <div class="detail-rarity-badge hidden" id="detail-rarity-badge">
+              <span class="rarity-star">&#9733;</span>
+              <span class="rarity-value" id="detail-rarity-value"></span>
+            </div>
+          </div>
+          <div class="detail-type" id="detail-type"></div>
+          <div class="detail-airline" id="detail-airline"></div>
+          <div class="detail-divider"></div>
+          <div class="detail-grid">
+            <div class="detail-field">
+              <div class="detail-label">ALTITUDE</div>
+              <div class="detail-value" id="detail-altitude"></div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">SPEED</div>
+              <div class="detail-value" id="detail-speed"></div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">HEADING</div>
+              <div class="detail-value" id="detail-heading"></div>
+            </div>
+            <div class="detail-field">
+              <div class="detail-label">DISTANCE</div>
+              <div class="detail-value" id="detail-distance"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Aircraft List -->
+      <div class="list-panel" id="list-panel">
+        <div class="list-header">
+          <span class="list-title">TRAFFIC</span>
+          <span class="list-sort">by distance</span>
+        </div>
+        <div class="list-columns">
+          <span class="col-callsign">CALLSIGN</span>
+          <span class="col-type">TYPE</span>
+          <span class="col-alt">ALT</span>
+          <span class="col-spd">SPD</span>
+          <span class="col-dist">DIST</span>
+        </div>
+        <div class="list-body" id="list-body">
+          <!-- Aircraft rows populated by aircraft.js -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="qrcode.min.js"></script>
+  <script src="setup.js"></script>
+  <script src="websocket.js"></script>
+  <script src="radar.js"></script>
+  <script src="aircraft.js"></script>
+</body>
+</html>
