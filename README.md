@@ -2,8 +2,6 @@
 
 Open-source on-device software that turns any Linux single-board computer with an RTL-SDR receiver into a real-time ADS-B aircraft tracker with a live radar display. Part of the [SkyTracker](https://skytracker.ai) platform.
 
-See [PRD.md](PRD.md) for the full product requirements document.
-
 ## Quick Start
 
 ### Option 1: Pre-Built SD Image
@@ -89,7 +87,6 @@ skytracker-device/
 │   └── kiosk.sh           # Chromium kiosk mode launcher
 ├── configs/
 │   └── config.example.yaml
-├── PRD.md                 # Full product requirements document
 ├── LICENSE                # MIT
 └── README.md
 ```
@@ -107,8 +104,6 @@ skytracker-device/
 Any Linux SBC with USB works. Raspberry Pi is recommended but not required.
 
 ## Contributing
-
-See [PRD.md, Section 14](PRD.md#14-contributing) for development environment setup, code standards, and contribution guidelines.
 
 ## License
 
