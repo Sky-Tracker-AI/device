@@ -254,6 +254,8 @@ create_config() {
     fi
 
     name="${name:-My SkyTracker}"
+    # Sanitize name to prevent YAML/shell injection.
+    name="$(echo "$name" | tr -cd '[:alnum:] _.,-')"
 
     cat > "$CONFIG_FILE" << CFGEOF
 # SkyTracker Device Configuration

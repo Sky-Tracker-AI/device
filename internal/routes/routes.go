@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -73,8 +74,8 @@ func (l *Lookup) Get(callsign string) *Route {
 }
 
 func (l *Lookup) fetch(callsign string) {
-	url := fmt.Sprintf("https://api.adsbdb.com/v0/callsign/%s", callsign)
-	resp, err := l.client.Get(url)
+	reqURL := fmt.Sprintf("https://api.adsbdb.com/v0/callsign/%s", url.PathEscape(callsign))
+	resp, err := l.client.Get(reqURL)
 	if err != nil {
 		log.Printf("[routes] fetch error for %s: %v", callsign, err)
 		l.cacheResult(callsign, nil)
