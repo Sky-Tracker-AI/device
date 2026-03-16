@@ -11,6 +11,7 @@ type Aircraft struct {
 	Lat         *float64 `json:"lat,omitempty"`
 	Lon         *float64 `json:"lon,omitempty"`
 	Category    string  `json:"category,omitempty"`
+	BaroRate    *int    `json:"baro_rate,omitempty"`
 	Squawk      string  `json:"squawk,omitempty"`
 	Emergency   string  `json:"emergency,omitempty"`
 	RSSI        float64 `json:"rssi,omitempty"`
@@ -51,6 +52,14 @@ func (a *Aircraft) Speed() float64 {
 func (a *Aircraft) Heading() float64 {
 	if a.Track != nil {
 		return *a.Track
+	}
+	return 0
+}
+
+// VertRate returns barometric rate of change in ft/min, or 0 if unavailable.
+func (a *Aircraft) VertRate() int {
+	if a.BaroRate != nil {
+		return *a.BaroRate
 	}
 	return 0
 }

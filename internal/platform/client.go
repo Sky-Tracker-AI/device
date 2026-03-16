@@ -96,6 +96,8 @@ type IngestSighting struct {
 	Lat       float64 `json:"lat"`
 	Lon       float64 `json:"lon"`
 	Distance  float64 `json:"distance"`
+	VertRate  int     `json:"vert_rate"`
+	Squawk    string  `json:"squawk"`
 }
 
 // IngestRequest is the payload for the batch ingest endpoint.
