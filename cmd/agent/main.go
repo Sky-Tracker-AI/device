@@ -28,7 +28,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.1.0"
+const version = "0.1.3"
 
 func main() {
 	var (
@@ -60,6 +60,19 @@ func main() {
 		}
 		log.Printf("Rollback successful. Restart the agent to use the previous version.")
 		os.Exit(0)
+	}
+
+	// Apply staged OTA update if one was downloaded before this restart.
+	{
+		exe, _ := os.Executable()
+		u := updater.New(version, exe)
+		if u.ApplyStaged() {
+			log.Printf("OTA update applied — restarting with new binary")
+			// Re-exec ourselves so the new binary takes over.
+			if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+				log.Printf("Re-exec failed: %v — restart the service manually", err)
+			}
+		}
 	}
 
 	// Load configuration.
