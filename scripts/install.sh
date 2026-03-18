@@ -2,7 +2,7 @@
 # ============================================================================
 # SkyTracker Device — One-Line Installer
 # ============================================================================
-# Installs dump1090-fa, GPS support, the SkyTracker Agent, Display UI,
+# Installs readsb, GPS support, the SkyTracker Agent, Display UI,
 # and starts everything as a systemd service. The agent auto-registers
 # with skytracker.ai on first boot — no API key needed.
 #
@@ -97,68 +97,27 @@ detect_os() {
     success "OS: ${PRETTY_NAME}"
 }
 
-# ── Install dump1090-fa ──────────────────────────────────────────────────────
+# ── Install ADS-B decoder ────────────────────────────────────────────────────
+# readsb is a maintained ADS-B decoder in Debian's default repos (trixie+).
+# It serves the same aircraft.json format on port 8080.
 
-install_dump1090() {
-    if command -v dump1090-fa &>/dev/null; then
-        success "dump1090-fa already installed"
+install_adsb_decoder() {
+    if command -v readsb &>/dev/null || command -v dump1090-fa &>/dev/null; then
+        success "ADS-B decoder already installed"
         return
     fi
 
-    info "Installing dump1090-fa..."
+    info "Installing readsb..."
 
     apt-get update -qq >/dev/null 2>&1
-    apt-get install -y -qq gnupg curl lsb-release >/dev/null 2>&1
 
-    # Try default repos first
-    if apt-get install -y -qq dump1090-fa >/dev/null 2>&1; then
-        success "dump1090-fa installed from default repos"
+    if apt-get install -y -qq readsb >/dev/null 2>&1; then
+        success "readsb installed"
+        systemctl enable readsb >/dev/null 2>&1 || true
+        systemctl start readsb 2>/dev/null || true
     else
-        # Add FlightAware repo
-        info "Adding FlightAware repository..."
-
-        local gpg_ok=false
-        for key_url in \
-            "https://flightaware.com/adsb/piaware/files/packages.flightaware.com.gpg.key" \
-            "https://www.flightaware.com/adsb/piaware/files/packages.flightaware.com.gpg.key"; do
-            if curl -fsSL "$key_url" \
-                | gpg --dearmor -o /usr/share/keyrings/flightaware-archive-keyring.gpg 2>/dev/null; then
-                gpg_ok=true
-                break
-            fi
-        done
-
-        if [[ "$gpg_ok" != "true" ]]; then
-            warn "Could not fetch FlightAware GPG key — skipping repo setup"
-            warn "Install dump1090-fa manually: https://flightaware.com/adsb/piaware/install"
-            return
-        fi
-
-        local codename
-        codename="$(lsb_release -cs 2>/dev/null || echo 'bookworm')"
-
-        # FlightAware repo only carries certain Debian/Raspbian releases.
-        # Map unsupported codenames to the closest supported one.
-        case "$codename" in
-            bookworm|bullseye|buster) ;; # supported as-is
-            trixie|forky|sid)  codename="bookworm" ;;
-            noble|oracular)    codename="bookworm" ;;  # Ubuntu 24.x
-            *)                 codename="bookworm" ;;  # safe fallback
-        esac
-
-        echo "deb [signed-by=/usr/share/keyrings/flightaware-archive-keyring.gpg] https://flightaware.com/adsb/piaware/files/packages.flightaware.com ${codename} piaware" \
-            > /etc/apt/sources.list.d/flightaware.list
-
-        apt-get update -qq >/dev/null 2>&1
-        if apt-get install -y -qq dump1090-fa >/dev/null 2>&1; then
-            success "dump1090-fa installed from FlightAware repo"
-        else
-            warn "Could not install dump1090-fa — install it manually"
-        fi
+        warn "Could not install readsb — install it manually: sudo apt install readsb"
     fi
-
-    systemctl enable dump1090-fa >/dev/null 2>&1 || true
-    systemctl start dump1090-fa 2>/dev/null || true
 }
 
 # ── Install GPS support ──────────────────────────────────────────────────────
@@ -326,8 +285,8 @@ create_service() {
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SVCEOF
 [Unit]
 Description=SkyTracker Agent
-After=network.target dump1090-fa.service
-Wants=dump1090-fa.service
+After=network.target readsb.service dump1090-fa.service
+Wants=readsb.service
 
 [Service]
 Type=simple
@@ -385,7 +344,7 @@ main() {
     check_root
     detect_os
     detect_arch
-    install_dump1090
+    install_adsb_decoder
     install_gps
     download_agent
     download_ui
