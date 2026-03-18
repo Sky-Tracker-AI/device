@@ -116,11 +116,36 @@ install_dump1090() {
     else
         # Add FlightAware repo
         info "Adding FlightAware repository..."
-        curl -fsSL https://flightaware.com/adsb/piaware/files/packages.flightaware.com.gpg.key \
-            | gpg --dearmor -o /usr/share/keyrings/flightaware-archive-keyring.gpg 2>/dev/null
+
+        local gpg_ok=false
+        for key_url in \
+            "https://flightaware.com/adsb/piaware/files/packages.flightaware.com.gpg.key" \
+            "https://www.flightaware.com/adsb/piaware/files/packages.flightaware.com.gpg.key"; do
+            if curl -fsSL "$key_url" \
+                | gpg --dearmor -o /usr/share/keyrings/flightaware-archive-keyring.gpg 2>/dev/null; then
+                gpg_ok=true
+                break
+            fi
+        done
+
+        if [[ "$gpg_ok" != "true" ]]; then
+            warn "Could not fetch FlightAware GPG key — skipping repo setup"
+            warn "Install dump1090-fa manually: https://flightaware.com/adsb/piaware/install"
+            return
+        fi
 
         local codename
         codename="$(lsb_release -cs 2>/dev/null || echo 'bookworm')"
+
+        # FlightAware repo only carries certain Debian/Raspbian releases.
+        # Map unsupported codenames to the closest supported one.
+        case "$codename" in
+            bookworm|bullseye|buster) ;; # supported as-is
+            trixie|forky|sid)  codename="bookworm" ;;
+            noble|oracular)    codename="bookworm" ;;  # Ubuntu 24.x
+            *)                 codename="bookworm" ;;  # safe fallback
+        esac
+
         echo "deb [signed-by=/usr/share/keyrings/flightaware-archive-keyring.gpg] https://flightaware.com/adsb/piaware/files/packages.flightaware.com ${codename} piaware" \
             > /etc/apt/sources.list.d/flightaware.list
 
