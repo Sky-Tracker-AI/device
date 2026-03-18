@@ -113,8 +113,16 @@ install_adsb_decoder() {
 
     if apt-get install -y -qq readsb >/dev/null 2>&1; then
         success "readsb installed"
+
+        # Enable HTTP server on port 8080 so the agent can poll aircraft.json
+        local defaults="/etc/default/readsb"
+        if [[ -f "$defaults" ]] && ! grep -q 'net-http-port' "$defaults"; then
+            sed -i 's/^NET_OPTIONS="/NET_OPTIONS="--net-http-port 8080 /' "$defaults"
+            info "Enabled readsb HTTP on port 8080"
+        fi
+
         systemctl enable readsb >/dev/null 2>&1 || true
-        systemctl start readsb 2>/dev/null || true
+        systemctl restart readsb 2>/dev/null || true
     else
         warn "Could not install readsb — install it manually: sudo apt install readsb"
     fi
