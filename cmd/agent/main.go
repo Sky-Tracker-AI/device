@@ -542,6 +542,8 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 			resp, err := client.Health(ctx, platform.HealthRequest{
 				Uptime:        int64(time.Since(startTime).Seconds()),
 				GPSFix:        pos.HasFix,
+				Lat:           pos.Lat,
+				Lon:           pos.Lon,
 				AircraftCount: len(aircraft),
 				AgentVersion:  version,
 				LastSync:      time.Now().Unix(),

@@ -149,12 +149,14 @@ func (c *Client) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse
 
 // HealthRequest is the payload for device health reporting.
 type HealthRequest struct {
-	Uptime        int64  `json:"uptime_seconds"`
-	GPSFix        bool   `json:"gps_fix"`
-	AircraftCount int    `json:"aircraft_count"`
-	AgentVersion  string `json:"agent_version"`
-	LastSync      int64  `json:"last_sync_timestamp"`
-	QueueSize     int    `json:"queue_size"`
+	Uptime        int64   `json:"uptime_seconds"`
+	GPSFix        bool    `json:"gps_fix"`
+	Lat           float64 `json:"lat"`
+	Lon           float64 `json:"lon"`
+	AircraftCount int     `json:"aircraft_count"`
+	AgentVersion  string  `json:"agent_version"`
+	LastSync      int64   `json:"last_sync_timestamp"`
+	QueueSize     int     `json:"queue_size"`
 }
 
 // HealthResponse contains any updates from the platform.
