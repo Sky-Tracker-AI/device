@@ -28,7 +28,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.1.3"
+const version = "0.1.4"
 
 func main() {
 	var (
