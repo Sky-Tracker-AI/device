@@ -98,8 +98,9 @@ detect_os() {
 }
 
 # ── Install ADS-B decoder ────────────────────────────────────────────────────
-# readsb is a maintained ADS-B decoder in Debian's default repos (trixie+).
-# It serves the same aircraft.json format on port 8080.
+# The Debian-packaged readsb lacks RTL-SDR support, so we use wiedehopf's
+# build script which compiles readsb from source with full SDR support and
+# sets up the systemd service with sensible defaults (including HTTP on 8080).
 
 install_adsb_decoder() {
     if command -v readsb &>/dev/null || command -v dump1090-fa &>/dev/null; then
@@ -107,25 +108,32 @@ install_adsb_decoder() {
         return
     fi
 
-    info "Installing readsb..."
+    info "Installing readsb (with RTL-SDR support)..."
 
     apt-get update -qq >/dev/null 2>&1
+    apt-get install -y -qq curl librtlsdr0 rtl-sdr >/dev/null 2>&1
 
-    if apt-get install -y -qq readsb >/dev/null 2>&1; then
-        success "readsb installed"
-
-        # Enable HTTP server on port 8080 so the agent can poll aircraft.json
-        local defaults="/etc/default/readsb"
-        if [[ -f "$defaults" ]] && ! grep -q 'net-http-port' "$defaults"; then
-            sed -i 's/^NET_OPTIONS="/NET_OPTIONS="--net-http-port 8080 /' "$defaults"
-            info "Enabled readsb HTTP on port 8080"
-        fi
-
-        systemctl enable readsb >/dev/null 2>&1 || true
-        systemctl restart readsb 2>/dev/null || true
-    else
-        warn "Could not install readsb — install it manually: sudo apt install readsb"
+    # Remove Debian-packaged readsb if present (no RTL-SDR support)
+    if dpkg -l readsb >/dev/null 2>&1; then
+        apt-get remove -y -qq readsb >/dev/null 2>&1 || true
     fi
+
+    if bash -c "$(curl -fsSL https://raw.githubusercontent.com/wiedehopf/adsb-scripts/master/readsb-install.sh)" >/dev/null 2>&1; then
+        success "readsb installed with RTL-SDR support"
+    else
+        warn "Could not install readsb — see https://github.com/wiedehopf/adsb-scripts"
+        return
+    fi
+
+    # Ensure HTTP server on port 8080 so the agent can poll aircraft.json
+    local defaults="/etc/default/readsb"
+    if [[ -f "$defaults" ]] && ! grep -q 'net-http-port' "$defaults"; then
+        sed -i 's/^NET_OPTIONS="--net /NET_OPTIONS="--net --net-http-port 8080 /' "$defaults"
+        info "Enabled readsb HTTP on port 8080"
+    fi
+
+    systemctl enable readsb >/dev/null 2>&1 || true
+    systemctl restart readsb 2>/dev/null || true
 }
 
 # ── Install GPS support ──────────────────────────────────────────────────────
