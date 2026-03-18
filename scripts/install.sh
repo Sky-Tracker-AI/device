@@ -99,8 +99,8 @@ detect_os() {
 
 # ── Install ADS-B decoder ────────────────────────────────────────────────────
 # The Debian-packaged readsb lacks RTL-SDR support, so we use wiedehopf's
-# build script which compiles readsb from source with full SDR support and
-# sets up the systemd service with sensible defaults (including HTTP on 8080).
+# build script which compiles readsb from source with full SDR support.
+# It also installs tar1090 (lighttpd) which serves aircraft.json on port 80.
 
 install_adsb_decoder() {
     if command -v readsb &>/dev/null || command -v dump1090-fa &>/dev/null; then
@@ -122,18 +122,7 @@ install_adsb_decoder() {
         success "readsb installed with RTL-SDR support"
     else
         warn "Could not install readsb — see https://github.com/wiedehopf/adsb-scripts"
-        return
     fi
-
-    # Ensure HTTP server on port 8080 so the agent can poll aircraft.json
-    local defaults="/etc/default/readsb"
-    if [[ -f "$defaults" ]] && ! grep -q 'net-http-port' "$defaults"; then
-        sed -i 's/^NET_OPTIONS="--net /NET_OPTIONS="--net --net-http-port 8080 /' "$defaults"
-        info "Enabled readsb HTTP on port 8080"
-    fi
-
-    systemctl enable readsb >/dev/null 2>&1 || true
-    systemctl restart readsb 2>/dev/null || true
 }
 
 # ── Install GPS support ──────────────────────────────────────────────────────
@@ -280,7 +269,7 @@ display:
     end: "06:00"
 
 sources:
-  dump1090_url: "http://localhost:8080/data/aircraft.json"
+  dump1090_url: "http://localhost/tar1090/data/aircraft.json"
   gpsd_host: "localhost"
   gpsd_port: 2947
 

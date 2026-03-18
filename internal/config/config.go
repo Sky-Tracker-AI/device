@@ -72,7 +72,7 @@ func Default() *Config {
 			},
 		},
 		Sources: SourcesConfig{
-			Dump1090URL: "http://localhost:8080/data/aircraft.json",
+			Dump1090URL: "http://localhost/tar1090/data/aircraft.json",
 			GPSDHost:    "localhost",
 			GPSDPort:    2947,
 		},

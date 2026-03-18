@@ -44,7 +44,7 @@ display:
 sources:
   # URL where dump1090-fa serves aircraft data
   # Default assumes dump1090-fa runs on the same device on port 8080
-  dump1090_url: "http://localhost:8080/data/aircraft.json"
+  dump1090_url: "http://localhost/tar1090/data/aircraft.json"
 
   # gpsd connection (reads GPS position from USB dongle)
   gpsd_host: "localhost"
