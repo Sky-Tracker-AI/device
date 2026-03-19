@@ -23,8 +23,9 @@ type Route struct {
 type Lookup struct {
 	client *http.Client
 
-	mu    sync.RWMutex
-	cache map[string]*cacheEntry
+	mu       sync.RWMutex
+	cache    map[string]*cacheEntry
+	inflight map[string]bool
 }
 
 type cacheEntry struct {
@@ -35,8 +36,9 @@ type cacheEntry struct {
 // New creates a new route lookup.
 func New() *Lookup {
 	return &Lookup{
-		client: &http.Client{Timeout: 5 * time.Second},
-		cache:  make(map[string]*cacheEntry),
+		client:   &http.Client{Timeout: 5 * time.Second},
+		cache:    make(map[string]*cacheEntry),
+		inflight: make(map[string]bool),
 	}
 }
 
@@ -64,7 +66,18 @@ func (l *Lookup) Get(callsign string) *Route {
 	}
 
 	// Fetch in background to avoid blocking the WebSocket broadcast.
-	go l.fetch(callsign)
+	// Deduplicate concurrent fetches for the same callsign.
+	l.mu.Lock()
+	if !l.inflight[callsign] {
+		l.inflight[callsign] = true
+		go func() {
+			l.fetch(callsign)
+			l.mu.Lock()
+			delete(l.inflight, callsign)
+			l.mu.Unlock()
+		}()
+	}
+	l.mu.Unlock()
 
 	// Return cached value (possibly stale) or nil.
 	if entry != nil {

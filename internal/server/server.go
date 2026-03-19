@@ -230,10 +230,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			delete(s.clients, conn)
+			if _, ok := s.clients[conn]; ok {
+				delete(s.clients, conn)
+				conn.Close()
+				log.Printf("[server] ws client disconnected (%d remaining)", len(s.clients))
+			}
 			s.mu.Unlock()
-			conn.Close()
-			log.Printf("[server] ws client disconnected (%d remaining)", len(s.clients))
 		}()
 
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -351,6 +353,9 @@ func (s *Server) sendUpdate() {
 		return enriched[i].DistanceNM < enriched[j].DistanceNM
 	})
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	msg := WSMessage{
 		Type:      "aircraft_update",
 		Timestamp: time.Now().UnixMilli(),
@@ -368,9 +373,6 @@ func (s *Server) sendUpdate() {
 		log.Printf("[server] marshal error: %v", err)
 		return
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	for conn := range s.clients {
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))

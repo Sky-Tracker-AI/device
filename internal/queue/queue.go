@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,8 +104,8 @@ func (q *Queue) Enqueue(sightings []Sighting) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	// Enforce size limit.
-	go q.enforceLimit()
+	// Enforce size limit inline (avoids unbounded goroutine accumulation).
+	q.enforceLimitLocked()
 
 	return nil
 }
@@ -143,11 +144,16 @@ func (q *Queue) Dequeue(limit int) ([]Sighting, error) {
 		ids = append(ids, id)
 	}
 
-	// Delete dequeued rows.
+	// Delete dequeued rows in bulk.
 	if len(ids) > 0 {
-		for _, id := range ids {
-			q.db.Exec("DELETE FROM sightings WHERE id = ?", id)
+		placeholders := make([]string, len(ids))
+		args := make([]interface{}, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args[i] = id
 		}
+		q.db.Exec("DELETE FROM sightings WHERE id IN ("+strings.Join(placeholders, ",")+
+			")", args...)
 	}
 
 	return sightings, nil
@@ -168,10 +174,9 @@ func (q *Queue) Close() error {
 	return nil
 }
 
-func (q *Queue) enforceLimit() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
+// enforceLimitLocked prunes old entries if the DB exceeds maxBytes.
+// Must be called with q.mu held.
+func (q *Queue) enforceLimitLocked() {
 	// Check database file size.
 	var pageCount, pageSize int64
 	q.db.QueryRow("PRAGMA page_count").Scan(&pageCount)

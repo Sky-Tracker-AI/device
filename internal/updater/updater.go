@@ -19,6 +19,7 @@ import (
 const (
 	defaultCheckInterval = 24 * time.Hour
 	githubReleasesAPI    = "https://api.github.com/repos/Sky-Tracker-AI/device/releases/latest"
+	maxBinarySize        = 100 * 1024 * 1024 // 100 MB
 )
 
 // Updater checks for and applies OTA updates from GitHub Releases.
@@ -115,6 +116,11 @@ func (u *Updater) checkAndStage() {
 		return
 	}
 
+	if checksumAsset == nil {
+		log.Printf("[updater] no checksum asset for %s — refusing to install unverified binary", assetName)
+		return
+	}
+
 	// Download and verify.
 	if err := u.downloadAndStage(binaryAsset, checksumAsset); err != nil {
 		log.Printf("[updater] download error: %v", err)
@@ -155,33 +161,31 @@ func (u *Updater) downloadAndStage(binary *GithubAsset, checksum *GithubAsset) e
 	}
 
 	// Download and verify checksum.
-	if checksum != nil {
-		checksumPath := filepath.Join(u.stagingDir, "checksum.sha256")
-		if err := downloadFile(checksum.BrowserDownloadURL, checksumPath); err != nil {
-			os.Remove(binaryPath)
-			return fmt.Errorf("download checksum: %w", err)
-		}
-
-		expectedHash, err := os.ReadFile(checksumPath)
-		if err != nil {
-			os.Remove(binaryPath)
-			return fmt.Errorf("read checksum: %w", err)
-		}
-
-		actualHash, err := fileSHA256(binaryPath)
-		if err != nil {
-			os.Remove(binaryPath)
-			return fmt.Errorf("compute hash: %w", err)
-		}
-
-		expected := strings.TrimSpace(strings.Fields(string(expectedHash))[0])
-		if actualHash != expected {
-			os.Remove(binaryPath)
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actualHash)
-		}
-
-		log.Printf("[updater] checksum verified: %s", actualHash)
+	checksumPath := filepath.Join(u.stagingDir, "checksum.sha256")
+	if err := downloadFile(checksum.BrowserDownloadURL, checksumPath); err != nil {
+		os.Remove(binaryPath)
+		return fmt.Errorf("download checksum: %w", err)
 	}
+
+	expectedHash, err := os.ReadFile(checksumPath)
+	if err != nil {
+		os.Remove(binaryPath)
+		return fmt.Errorf("read checksum: %w", err)
+	}
+
+	actualHash, err := fileSHA256(binaryPath)
+	if err != nil {
+		os.Remove(binaryPath)
+		return fmt.Errorf("compute hash: %w", err)
+	}
+
+	expected := strings.TrimSpace(strings.Fields(string(expectedHash))[0])
+	if actualHash != expected {
+		os.Remove(binaryPath)
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actualHash)
+	}
+
+	log.Printf("[updater] checksum verified: %s", actualHash)
 
 	// Make the binary executable.
 	if err := os.Chmod(binaryPath, 0755); err != nil {
@@ -251,10 +255,17 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	_, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxBinarySize))
+	syncErr := out.Sync()
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }
 
 func fileSHA256(path string) (string, error) {
@@ -289,9 +300,27 @@ func copyFile(src, dst string) error {
 }
 
 func isNewer(tag, current string) bool {
-	// Strip leading 'v' for comparison.
-	tag = strings.TrimPrefix(tag, "v")
-	current = strings.TrimPrefix(current, "v")
-	// Simple lexicographic comparison works for semver with same-length parts.
-	return tag > current
+	tagParts := parseSemver(strings.TrimPrefix(tag, "v"))
+	curParts := parseSemver(strings.TrimPrefix(current, "v"))
+	for i := 0; i < 3; i++ {
+		if tagParts[i] > curParts[i] {
+			return true
+		}
+		if tagParts[i] < curParts[i] {
+			return false
+		}
+	}
+	return false
+}
+
+func parseSemver(s string) [3]int {
+	var parts [3]int
+	fields := strings.SplitN(s, ".", 3)
+	for i, f := range fields {
+		if i >= 3 {
+			break
+		}
+		fmt.Sscanf(f, "%d", &parts[i])
+	}
+	return parts
 }

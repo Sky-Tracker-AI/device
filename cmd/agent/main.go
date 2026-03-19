@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"net/url"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -51,9 +52,14 @@ func main() {
 		log.Printf("Running in MOCK mode — synthetic aircraft data")
 	}
 
+	// Resolve our own binary path (needed for OTA and rollback).
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Cannot determine executable path: %v", err)
+	}
+
 	// Handle rollback.
 	if *rollback {
-		exe, _ := os.Executable()
 		u := updater.New(version, exe)
 		if err := u.Rollback(); err != nil {
 			log.Fatalf("Rollback failed: %v", err)
@@ -64,7 +70,6 @@ func main() {
 
 	// Apply staged OTA update if one was downloaded before this restart.
 	{
-		exe, _ := os.Executable()
 		u := updater.New(version, exe)
 		if u.ApplyStaged() {
 			log.Printf("OTA update applied — restarting with new binary")
@@ -77,7 +82,6 @@ func main() {
 
 	// Load configuration.
 	var cfg *config.Config
-	var err error
 	if *configPath != "" {
 		cfg, err = config.LoadFromPath(*configPath)
 	} else {
@@ -286,7 +290,6 @@ func main() {
 	}
 
 	// --- OTA Updater ---
-	exe, _ := os.Executable()
 	otaUpdater := updater.New(version, exe)
 	if !*mockMode {
 		go otaUpdater.Run(ctx)
@@ -444,7 +447,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 	if c.state.ClaimCode != "" {
 		// Derive frontend URL from API endpoint (api.skytracker.ai → skytracker.ai).
 		frontendURL := strings.Replace(c.endpoint, "://api.", "://", 1)
-		cs.ClaimURL = frontendURL + "/claim?code=" + c.state.ClaimCode
+		cs.ClaimURL = frontendURL + "/claim?code=" + url.QueryEscape(c.state.ClaimCode)
 	}
 	return cs
 }
@@ -576,9 +579,12 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 				log.Printf("[platform] device claimed! station_name=%s", resp.StationName)
 				claimProv.mu.Lock()
 				agentState.Claimed = true
-				agentState.ClaimCode = "" // no longer needed
-				agentState.Save()
+				agentState.ClaimCode = ""
 				claimProv.mu.Unlock()
+
+				if err := agentState.Save(); err != nil {
+					log.Printf("[platform] failed to save claim state: %v", err)
+				}
 
 				// Switch to slower health polling now that we're claimed.
 				healthTicker.Reset(5 * time.Minute)

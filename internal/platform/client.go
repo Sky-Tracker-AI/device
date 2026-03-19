@@ -72,7 +72,7 @@ func (c *Client) Register(ctx context.Context, req RegisterRequest) (*RegisterRe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("register: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -136,7 +136,7 @@ func (c *Client) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("ingest: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -195,7 +195,7 @@ func (c *Client) Health(ctx context.Context, req HealthRequest) (*HealthResponse
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("health: status %d: %s", resp.StatusCode, string(respBody))
 	}
 

@@ -121,6 +121,9 @@ func (e *Engine) loadCaches() {
 			}
 			count++
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[enrichment] aircraft scan error: %v", err)
+		}
 		log.Printf("[enrichment] loaded %d aircraft records", count)
 	}
 
@@ -142,6 +145,9 @@ func (e *Engine) loadCaches() {
 				Country: country,
 			}
 			count++
+		}
+		if err := rows2.Err(); err != nil {
+			log.Printf("[enrichment] airline scan error: %v", err)
 		}
 		log.Printf("[enrichment] loaded %d airline records", count)
 	}
