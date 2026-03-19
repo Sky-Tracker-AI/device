@@ -259,7 +259,7 @@ func (mp *MockPoller) update() {
 		result = append(result, Aircraft{
 			Hex:     m.hex,
 			Flight:  callsign,
-			AltBaro: &alt,
+			AltBaro: &FlexInt{Value: &alt},
 			GS:      &speed,
 			Track:   &heading,
 			Lat:     &lat,

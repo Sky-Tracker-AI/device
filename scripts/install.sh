@@ -311,6 +311,57 @@ SVCEOF
 
 # ── Start ────────────────────────────────────────────────────────────────────
 
+setup_kiosk() {
+    info "Setting up kiosk display..."
+
+    # Install kiosk launcher script
+    local kiosk_src="${INSTALL_DIR}/scripts/kiosk.sh"
+    local kiosk_dst="${INSTALL_DIR}/kiosk.sh"
+    if [[ -f "$kiosk_src" ]]; then
+        cp "$kiosk_src" "$kiosk_dst"
+    fi
+    chmod +x "$kiosk_dst" 2>/dev/null || true
+
+    # Determine the desktop user (the human user, not root)
+    local desktop_user
+    desktop_user="$(logname 2>/dev/null || echo pi)"
+    local user_home
+    user_home="$(eval echo "~${desktop_user}")"
+
+    # Disable screensaver in system autostart
+    local autostart_dir="/etc/xdg/lxsession"
+    for session_dir in "$autostart_dir"/*/; do
+        if [[ -f "${session_dir}autostart" ]]; then
+            sed -i '/@xscreensaver/d' "${session_dir}autostart"
+        fi
+    done
+
+    # Disable gnome-keyring (Chromium triggers its unlock prompt in kiosk mode)
+    for component in gnome-keyring-pkcs11 gnome-keyring-secrets gnome-keyring-ssh; do
+        cat > "/etc/xdg/autostart/${component}.desktop" << GKEOF
+[Desktop Entry]
+Type=Application
+Name=${component}
+Hidden=true
+GKEOF
+    done
+
+    # Create autostart entry for kiosk browser
+    local user_autostart="${user_home}/.config/autostart"
+    mkdir -p "$user_autostart"
+    cat > "${user_autostart}/skytracker-kiosk.desktop" << KIOSKEOF
+[Desktop Entry]
+Type=Application
+Name=SkyTracker Kiosk
+Exec=${kiosk_dst} http://localhost:${DISPLAY_PORT}
+Hidden=false
+X-GNOME-Autostart-enabled=true
+KIOSKEOF
+    chown -R "${desktop_user}:" "${user_autostart}"
+
+    success "Kiosk display configured (launches on login)"
+}
+
 start_service() {
     info "Starting SkyTracker..."
     systemctl restart "${SERVICE_NAME}"
@@ -356,6 +407,7 @@ main() {
     download_enrichment
     create_config
     create_service
+    setup_kiosk
     start_service
     print_success
 }

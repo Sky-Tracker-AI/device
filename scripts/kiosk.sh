@@ -19,14 +19,14 @@
 
 set -euo pipefail
 
-URL="${1:-http://localhost:8080}"
+URL="${1:-http://localhost:8888}"
 
 # ── Disable screen blanking and screensaver ──────────────────────────────────
 
 # X11 screensaver off
 if command -v xset &> /dev/null; then
     xset s off          # Disable screen saver
-    xset -dpms          # Disable DPMS (Display Power Management Signaling)
+    xset -dpms 2>/dev/null || true  # Disable DPMS (not all X servers support it)
     xset s noblank      # Don't blank the screen
 fi
 
@@ -66,9 +66,22 @@ fi
 
 # ── Launch Chromium ──────────────────────────────────────────────────────────
 
-echo "[kiosk] Launching Chromium in kiosk mode → ${URL}"
+# ── Find Chromium binary ──────────────────────────────────────────────────
+CHROMIUM=""
+for bin in chromium-browser chromium; do
+    if command -v "$bin" &> /dev/null; then
+        CHROMIUM="$bin"
+        break
+    fi
+done
+if [[ -z "$CHROMIUM" ]]; then
+    echo "[kiosk] ERROR: Chromium not found"
+    exit 1
+fi
 
-exec chromium-browser \
+echo "[kiosk] Launching ${CHROMIUM} in kiosk mode → ${URL}"
+
+exec "$CHROMIUM" \
     --kiosk \
     --no-first-run \
     --noerrdialogs \
