@@ -336,7 +336,8 @@ setup_kiosk() {
         fi
     done
 
-    # Disable gnome-keyring (Chromium triggers its unlock prompt in kiosk mode)
+    # Disable gnome-keyring (Chromium triggers its unlock prompt in kiosk mode).
+    # XDG autostart suppression:
     for component in gnome-keyring-pkcs11 gnome-keyring-secrets gnome-keyring-ssh; do
         cat > "/etc/xdg/autostart/${component}.desktop" << GKEOF
 [Desktop Entry]
@@ -344,6 +345,12 @@ Type=Application
 Name=${component}
 Hidden=true
 GKEOF
+    done
+    # PAM-level suppression (keyring is also started by lightdm session):
+    for pam_file in /etc/pam.d/login /etc/pam.d/lightdm /etc/pam.d/lightdm-autologin; do
+        if [[ -f "$pam_file" ]]; then
+            sed -i '/pam_gnome_keyring.so/s/^[^#]/#&/' "$pam_file"
+        fi
     done
 
     # Create autostart entry for kiosk browser
