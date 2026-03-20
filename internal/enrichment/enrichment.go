@@ -1,79 +1,63 @@
 package enrichment
 
 import (
-	"database/sql"
+	"bufio"
+	"compress/gzip"
 	"log"
+	"os"
 	"strings"
 	"sync"
-
-	_ "modernc.org/sqlite"
 )
 
 // AircraftInfo is the enriched information for an aircraft.
 type AircraftInfo struct {
-	Registration string // e.g. "N8674B"
-	TypeCode     string // e.g. "B738"
-	TypeName     string // e.g. "Boeing 737-8H4"
-	Manufacturer string // e.g. "Boeing"
-	Operator     string // e.g. "Southwest Airlines"
-	Owner        string // e.g. "Wells Fargo Trust"
+	Registration string
+	TypeCode     string
+	TypeName     string
+	Operator     string
+	Owner        string
+	Year         string
+	LADD         bool // Limiting Aircraft Data Displayed
+	PIA          bool // Privacy ICAO Address (FAA-reassigned hex)
+	Military     bool
 }
 
 // AirlineInfo is the enriched information for an airline.
 type AirlineInfo struct {
-	Name    string // e.g. "Southwest Airlines"
-	ICAO    string // e.g. "SWA"
-	Country string // e.g. "United States"
+	Name    string
+	ICAO    string
+	Country string
 }
 
-// Engine provides aircraft type and airline lookups from a local SQLite
-// database. It is safe for concurrent use.
+// Engine provides aircraft type and airline lookups from a tar1090-db
+// CSV file. It is safe for concurrent use.
 type Engine struct {
-	db *sql.DB
+	csvPath string
 
-	// In-memory caches for fast lookups.
-	mu             sync.RWMutex
-	aircraftCache  map[string]*AircraftInfo // keyed by ICAO hex (lowercase)
-	airlineCache   map[string]*AirlineInfo  // keyed by callsign prefix (uppercase)
+	mu            sync.RWMutex
+	aircraftCache map[string]*AircraftInfo
+	airlineCache  map[string]*AirlineInfo
 }
 
-// NewEngine opens the SQLite enrichment database at the given path.
-// The database should have tables:
-//   - aircraft_types (icao_hex TEXT, type_code TEXT, type_name TEXT, manufacturer TEXT)
-//   - airlines (prefix TEXT, name TEXT, icao TEXT, country TEXT)
-//
-// If the database does not exist or tables are missing, the engine returns
-// empty results (offline-first: enrichment is additive).
-func NewEngine(dbPath string) *Engine {
+// NewEngine loads aircraft data from a tar1090-db aircraft.csv.gz file
+// and airline data from the built-in airline table.
+func NewEngine(csvPath string) *Engine {
 	e := &Engine{
-		aircraftCache: make(map[string]*AircraftInfo),
-		airlineCache:  make(map[string]*AirlineInfo),
+		csvPath:       csvPath,
+		aircraftCache: make(map[string]*AircraftInfo, 650000),
+		airlineCache:  make(map[string]*AirlineInfo, len(defaultAirlines)),
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		log.Printf("[enrichment] cannot open db %s: %v (enrichment disabled)", dbPath, err)
-		return e
+	if err := e.loadAircraft(); err != nil {
+		log.Printf("[enrichment] cannot load %s: %v (enrichment disabled)", csvPath, err)
 	}
 
-	// Test the connection.
-	if err := db.Ping(); err != nil {
-		log.Printf("[enrichment] cannot ping db: %v (enrichment disabled)", err)
-		db.Close()
-		return e
-	}
-
-	e.db = db
-	e.loadCaches()
+	e.loadAirlines()
 	return e
 }
 
-// Close releases the database connection.
-func (e *Engine) Close() {
-	if e.db != nil {
-		e.db.Close()
-	}
-}
+// Close is a no-op (retained for interface compatibility).
+func (e *Engine) Close() {}
 
 // LookupAircraft looks up aircraft type info by ICAO hex address.
 func (e *Engine) LookupAircraft(icaoHex string) *AircraftInfo {
@@ -82,8 +66,7 @@ func (e *Engine) LookupAircraft(icaoHex string) *AircraftInfo {
 	return e.aircraftCache[strings.ToLower(icaoHex)]
 }
 
-// LookupAirline looks up airline info from a callsign. It extracts the
-// alphabetic prefix from the callsign (e.g. "SWA" from "SWA1234").
+// LookupAirline looks up airline info from a callsign.
 func (e *Engine) LookupAirline(callsign string) *AirlineInfo {
 	prefix := extractPrefix(callsign)
 	if prefix == "" {
@@ -94,70 +77,99 @@ func (e *Engine) LookupAirline(callsign string) *AirlineInfo {
 	return e.airlineCache[prefix]
 }
 
-func (e *Engine) loadCaches() {
-	if e.db == nil {
-		return
+// Reload re-reads the aircraft CSV and swaps the in-memory cache.
+func (e *Engine) Reload() error {
+	newCache, err := parseAircraftCSV(e.csvPath)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.aircraftCache = newCache
+	e.mu.Unlock()
+	log.Printf("[enrichment] reloaded %d aircraft records", len(newCache))
+	return nil
+}
+
+func (e *Engine) loadAircraft() error {
+	cache, err := parseAircraftCSV(e.csvPath)
+	if err != nil {
+		return err
+	}
+	e.aircraftCache = cache
+	log.Printf("[enrichment] loaded %d aircraft records", len(cache))
+	return nil
+}
+
+func (e *Engine) loadAirlines() {
+	for prefix, info := range defaultAirlines {
+		e.airlineCache[strings.ToUpper(prefix)] = info
+	}
+	log.Printf("[enrichment] loaded %d airline records", len(e.airlineCache))
+}
+
+// parseAircraftCSV reads a gzipped tar1090-db aircraft CSV.
+// Format: icao_hex;registration;type_code;flags;type_name;year;owner;
+// Flags: position 0=military, 1=interesting, 2=PIA, 3=LADD
+func parseAircraftCSV(path string) (map[string]*AircraftInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	cache := make(map[string]*AircraftInfo, 650000)
+	scanner := bufio.NewScanner(gz)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.SplitN(line, ";", 8)
+		if len(fields) < 7 {
+			continue
+		}
+
+		hex := strings.ToLower(fields[0])
+		if hex == "" {
+			continue
+		}
+
+		flags := fields[3]
+		military := len(flags) > 0 && flags[0] == '1'
+		pia := len(flags) > 2 && flags[2] == '1'
+		ladd := len(flags) > 3 && flags[3] == '1'
+
+		reg := fields[1]
+		if pia {
+			reg = "" // PIA: registration must not be exposed
+		}
+
+		cache[hex] = &AircraftInfo{
+			Registration: reg,
+			TypeCode:     fields[2],
+			TypeName:     fields[4],
+			Owner:        fields[6],
+			Operator:     fields[6], // CSV has no separate operator field
+			Year:         fields[5],
+			Military:     military,
+			PIA:          pia,
+			LADD:         ladd,
+		}
 	}
 
-	// Load aircraft by ICAO hex.
-	rows, err := e.db.Query("SELECT icao_hex, registration, type_code, type_name, manufacturer, operator, owner FROM aircraft")
-	if err != nil {
-		log.Printf("[enrichment] cannot query aircraft: %v", err)
-	} else {
-		defer rows.Close()
-		count := 0
-		for rows.Next() {
-			var hex, reg, code, name, mfr, op, owner string
-			if err := rows.Scan(&hex, &reg, &code, &name, &mfr, &op, &owner); err != nil {
-				continue
-			}
-			e.aircraftCache[strings.ToLower(hex)] = &AircraftInfo{
-				Registration: reg,
-				TypeCode:     code,
-				TypeName:     name,
-				Manufacturer: mfr,
-				Operator:     op,
-				Owner:        owner,
-			}
-			count++
-		}
-		if err := rows.Err(); err != nil {
-			log.Printf("[enrichment] aircraft scan error: %v", err)
-		}
-		log.Printf("[enrichment] loaded %d aircraft records", count)
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
-	// Load airlines.
-	rows2, err := e.db.Query("SELECT callsign_prefix, airline_name, country FROM airlines")
-	if err != nil {
-		log.Printf("[enrichment] cannot query airlines: %v", err)
-	} else {
-		defer rows2.Close()
-		count := 0
-		for rows2.Next() {
-			var prefix, name, country string
-			if err := rows2.Scan(&prefix, &name, &country); err != nil {
-				continue
-			}
-			e.airlineCache[strings.ToUpper(prefix)] = &AirlineInfo{
-				Name:    name,
-				ICAO:    prefix,
-				Country: country,
-			}
-			count++
-		}
-		if err := rows2.Err(); err != nil {
-			log.Printf("[enrichment] airline scan error: %v", err)
-		}
-		log.Printf("[enrichment] loaded %d airline records", count)
-	}
+	return cache, nil
 }
 
 // extractPrefix returns the leading alphabetic characters of a callsign.
-// For example, "SWA1234" → "SWA", "N172SP" → "" (no airline prefix for
-// N-numbers).
 func extractPrefix(callsign string) string {
-	// N-numbers (US general aviation) start with N followed by digits.
 	if len(callsign) > 0 && callsign[0] == 'N' {
 		if len(callsign) > 1 && callsign[1] >= '0' && callsign[1] <= '9' {
 			return ""
@@ -185,35 +197,37 @@ type MockEngine struct {
 func NewMockEngine() *MockEngine {
 	m := &MockEngine{
 		aircraft: map[string]*AircraftInfo{
-			"a0b1c2": {TypeCode: "B738", TypeName: "Boeing 737-800", Manufacturer: "Boeing"},
-			"a1d2e3": {TypeCode: "A320", TypeName: "Airbus A320-200", Manufacturer: "Airbus"},
-			"a2f3g4": {TypeCode: "B763", TypeName: "Boeing 767-300ER", Manufacturer: "Boeing"},
-			"a3h4i5": {TypeCode: "A321", TypeName: "Airbus A321-200", Manufacturer: "Airbus"},
-			"a4j5k6": {TypeCode: "A320", TypeName: "Airbus A320-200", Manufacturer: "Airbus"},
-			"a5l6m7": {TypeCode: "C172", TypeName: "Cessna 172 Skyhawk", Manufacturer: "Cessna"},
-			"a6n7o8": {TypeCode: "E75L", TypeName: "Embraer E175LR", Manufacturer: "Embraer"},
-			"a7p8q9": {TypeCode: "B77L", TypeName: "Boeing 777-200LRF", Manufacturer: "Boeing"},
-			"a8r9s0": {TypeCode: "BE35", TypeName: "Beechcraft Bonanza", Manufacturer: "Beechcraft"},
-			"a9t0u1": {TypeCode: "B739", TypeName: "Boeing 737-900ER", Manufacturer: "Boeing"},
-			"b0v1w2": {TypeCode: "E45X", TypeName: "Embraer EMB 145XR", Manufacturer: "Embraer"},
-			"b1x2y3": {TypeCode: "A20N", TypeName: "Airbus A320neo", Manufacturer: "Airbus"},
-			"b2z3a4": {TypeCode: "C17", TypeName: "Boeing C-17 Globemaster III", Manufacturer: "Boeing"},
-			"b3b4c5": {TypeCode: "PA28", TypeName: "Piper Cherokee", Manufacturer: "Piper"},
-			"b4d5e6": {TypeCode: "B748", TypeName: "Boeing 747-8F", Manufacturer: "Boeing"},
+			"a0b1c2": {TypeCode: "B738", TypeName: "Boeing 737-800"},
+			"a1d2e3": {TypeCode: "A320", TypeName: "Airbus A320-200"},
+			"a2f3g4": {TypeCode: "B763", TypeName: "Boeing 767-300ER"},
+			"a3h4i5": {TypeCode: "A321", TypeName: "Airbus A321-200"},
+			"a4j5k6": {TypeCode: "A320", TypeName: "Airbus A320-200"},
+			"a5l6m7": {TypeCode: "C172", TypeName: "Cessna 172 Skyhawk"},
+			"a6n7o8": {TypeCode: "E75L", TypeName: "Embraer E175LR"},
+			"a7p8q9": {TypeCode: "B77L", TypeName: "Boeing 777-200LRF"},
+			"a8r9s0": {TypeCode: "BE35", TypeName: "Beechcraft Bonanza"},
+			"a9t0u1": {TypeCode: "B739", TypeName: "Boeing 737-900ER"},
+			"b0v1w2": {TypeCode: "E45X", TypeName: "Embraer EMB 145XR"},
+			"b1x2y3": {TypeCode: "A20N", TypeName: "Airbus A320neo"},
+			"b2z3a4": {TypeCode: "C17", TypeName: "Boeing C-17 Globemaster III", Military: true},
+			"b3b4c5": {TypeCode: "PA28", TypeName: "Piper Cherokee"},
+			"b4d5e6": {TypeCode: "B748", TypeName: "Boeing 747-8F"},
+			"c0ladd": {TypeCode: "GLF6", TypeName: "Gulfstream G650", Owner: "LADD Test Owner", LADD: true},
+			"c1pia0": {TypeCode: "B738", TypeName: "Boeing 737-800", PIA: true},
 		},
 		airlines: map[string]*AirlineInfo{
-			"SWA": {Name: "Southwest Airlines", ICAO: "SWA", Country: "United States"},
-			"UAL": {Name: "United Airlines", ICAO: "UAL", Country: "United States"},
-			"DAL": {Name: "Delta Air Lines", ICAO: "DAL", Country: "United States"},
-			"AAL": {Name: "American Airlines", ICAO: "AAL", Country: "United States"},
-			"JBU": {Name: "JetBlue Airways", ICAO: "JBU", Country: "United States"},
-			"SKW": {Name: "SkyWest Airlines", ICAO: "SKW", Country: "United States"},
-			"FDX": {Name: "FedEx Express", ICAO: "FDX", Country: "United States"},
-			"ASA": {Name: "Alaska Airlines", ICAO: "ASA", Country: "United States"},
-			"FFT": {Name: "Frontier Airlines", ICAO: "FFT", Country: "United States"},
-			"NKS": {Name: "Spirit Airlines", ICAO: "NKS", Country: "United States"},
+			"SWA":  {Name: "Southwest Airlines", ICAO: "SWA", Country: "United States"},
+			"UAL":  {Name: "United Airlines", ICAO: "UAL", Country: "United States"},
+			"DAL":  {Name: "Delta Air Lines", ICAO: "DAL", Country: "United States"},
+			"AAL":  {Name: "American Airlines", ICAO: "AAL", Country: "United States"},
+			"JBU":  {Name: "JetBlue Airways", ICAO: "JBU", Country: "United States"},
+			"SKW":  {Name: "SkyWest Airlines", ICAO: "SKW", Country: "United States"},
+			"FDX":  {Name: "FedEx Express", ICAO: "FDX", Country: "United States"},
+			"ASA":  {Name: "Alaska Airlines", ICAO: "ASA", Country: "United States"},
+			"FFT":  {Name: "Frontier Airlines", ICAO: "FFT", Country: "United States"},
+			"NKS":  {Name: "Spirit Airlines", ICAO: "NKS", Country: "United States"},
 			"EVAC": {Name: "US Air Force", ICAO: "EVAC", Country: "United States"},
-			"UPS": {Name: "UPS Airlines", ICAO: "UPS", Country: "United States"},
+			"UPS":  {Name: "UPS Airlines", ICAO: "UPS", Country: "United States"},
 		},
 	}
 	return m

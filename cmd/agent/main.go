@@ -156,69 +156,54 @@ func main() {
 	}
 
 	// --- Enrichment ---
-	var enrichAdapter *server.EnrichmentAdapter
+	var enrichEngine interface {
+		LookupAircraft(string) *enrichment.AircraftInfo
+		LookupAirline(string) *enrichment.AirlineInfo
+		Close()
+	}
 	if *mockMode {
-		mockEnrich := enrichment.NewMockEngine()
-		enrichAdapter = &server.EnrichmentAdapter{
-			LookupAircraftFn: func(icaoHex string) *server.AircraftTypeInfo {
-				info := mockEnrich.LookupAircraft(icaoHex)
-				if info == nil {
-					return nil
-				}
-				return &server.AircraftTypeInfo{
-					Registration: info.Registration,
-					TypeCode:     info.TypeCode,
-					TypeName:     info.TypeName,
-					Manufacturer: info.Manufacturer,
-					Operator:     info.Operator,
-					Owner:        info.Owner,
-				}
-			},
-			LookupAirlineFn: func(callsign string) *server.AirlineNameInfo {
-				info := mockEnrich.LookupAirline(callsign)
-				if info == nil {
-					return nil
-				}
-				return &server.AirlineNameInfo{
-					Name:    info.Name,
-					ICAO:    info.ICAO,
-					Country: info.Country,
-				}
-			},
-		}
-		log.Printf("Enrichment: mock engine with %d types", 15)
+		enrichEngine = enrichment.NewMockEngine()
+		log.Printf("Enrichment: mock engine")
 	} else {
-		dbPath := findEnrichmentDB()
-		engine := enrichment.NewEngine(dbPath)
+		csvPath := findAircraftCSV()
+		engine := enrichment.NewEngine(csvPath)
 		defer engine.Close()
-		enrichAdapter = &server.EnrichmentAdapter{
-			LookupAircraftFn: func(icaoHex string) *server.AircraftTypeInfo {
-				info := engine.LookupAircraft(icaoHex)
-				if info == nil {
-					return nil
-				}
-				return &server.AircraftTypeInfo{
-					Registration: info.Registration,
-					TypeCode:     info.TypeCode,
-					TypeName:     info.TypeName,
-					Manufacturer: info.Manufacturer,
-					Operator:     info.Operator,
-					Owner:        info.Owner,
-				}
-			},
-			LookupAirlineFn: func(callsign string) *server.AirlineNameInfo {
-				info := engine.LookupAirline(callsign)
-				if info == nil {
-					return nil
-				}
-				return &server.AirlineNameInfo{
-					Name:    info.Name,
-					ICAO:    info.ICAO,
-					Country: info.Country,
-				}
-			},
-		}
-		log.Printf("Enrichment: SQLite engine at %s", dbPath)
+		enrichEngine = engine
+
+		// Start background CSV updater.
+		csvUpdater := enrichment.NewCSVUpdater(engine, filepath.Dir(csvPath))
+		go csvUpdater.Run(ctx)
+		log.Printf("Enrichment: tar1090-db CSV at %s", csvPath)
+	}
+	enrichAdapter := &server.EnrichmentAdapter{
+		LookupAircraftFn: func(icaoHex string) *server.AircraftTypeInfo {
+			info := enrichEngine.LookupAircraft(icaoHex)
+			if info == nil {
+				return nil
+			}
+			return &server.AircraftTypeInfo{
+				Registration: info.Registration,
+				TypeCode:     info.TypeCode,
+				TypeName:     info.TypeName,
+				Operator:     info.Operator,
+				Owner:        info.Owner,
+				Year:         info.Year,
+				LADD:         info.LADD,
+				PIA:          info.PIA,
+				Military:     info.Military,
+			}
+		},
+		LookupAirlineFn: func(callsign string) *server.AirlineNameInfo {
+			info := enrichEngine.LookupAirline(callsign)
+			if info == nil {
+				return nil
+			}
+			return &server.AirlineNameInfo{
+				Name:    info.Name,
+				ICAO:    info.ICAO,
+				Country: info.Country,
+			}
+		},
 	}
 
 	// --- WiFi ---
@@ -390,16 +375,16 @@ func findUIDir() string {
 	return "ui"
 }
 
-// findEnrichmentDB looks for the enrichment database.
-func findEnrichmentDB() string {
+// findAircraftCSV looks for the tar1090-db aircraft CSV.
+func findAircraftCSV() string {
 	candidates := []string{
-		"data/enrichment.db",
-		"./data/enrichment.db",
-		"/opt/skytracker/data/enrichment.db",
+		"data/aircraft.csv.gz",
+		"./data/aircraft.csv.gz",
+		"/opt/skytracker/data/aircraft.csv.gz",
 	}
 
 	if exe, err := os.Executable(); err == nil {
-		candidates = append([]string{filepath.Join(filepath.Dir(exe), "data", "enrichment.db")}, candidates...)
+		candidates = append([]string{filepath.Join(filepath.Dir(exe), "data", "aircraft.csv.gz")}, candidates...)
 	}
 
 	for _, path := range candidates {
@@ -409,7 +394,7 @@ func findEnrichmentDB() string {
 		}
 	}
 
-	return "data/enrichment.db"
+	return "data/aircraft.csv.gz"
 }
 
 // routeAdapterImpl adapts routes.Lookup to server.RouteLookup.

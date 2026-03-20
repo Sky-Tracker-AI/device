@@ -29,9 +29,12 @@ type AircraftTypeInfo struct {
 	Registration string
 	TypeCode     string
 	TypeName     string
-	Manufacturer string
 	Operator     string
 	Owner        string
+	Year         string
+	LADD         bool
+	PIA          bool
+	Military     bool
 }
 
 // AirlineNameInfo mirrors enrichment.AirlineInfo to avoid import cycles.
@@ -77,6 +80,7 @@ type EnrichedAircraft struct {
 	DistanceNM   float64  `json:"distance_nm"`
 	Bearing      float64  `json:"bearing"`
 	RarityScore  *int     `json:"rarity_score"`
+	Military     bool     `json:"military,omitempty"`
 }
 
 // WSMessage is the top-level WebSocket message.
@@ -328,10 +332,14 @@ func (s *Server) sendUpdate() {
 		// Enrich with type info.
 		if s.enricher != nil {
 			if info := s.enricher.LookupAircraft(a.Hex); info != nil {
-				ea.Registration = info.Registration
 				ea.Type = info.TypeCode
 				ea.TypeName = info.TypeName
-				ea.Operator = info.Operator
+				ea.Military = info.Military
+				if !info.LADD {
+					// LADD aircraft: show on radar but suppress identifying info.
+					ea.Registration = info.Registration
+					ea.Operator = info.Operator
+				}
 			}
 			if info := s.enricher.LookupAirline(callsign); info != nil {
 				ea.Airline = info.Name

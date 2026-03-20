@@ -194,14 +194,12 @@ download_ui() {
 download_enrichment() {
     mkdir -p "$DATA_DIR"
 
-    local db_url
-    db_url="$(echo "$RELEASE_JSON" | jq -r \
-        '.assets[] | select(.name == "enrichment.db") | .browser_download_url')"
-
-    if [[ -n "$db_url" && "$db_url" != "null" ]]; then
-        info "Downloading aircraft database..."
-        curl -fsSL -o "${DATA_DIR}/enrichment.db" "$db_url" || warn "Enrichment DB download failed"
-        success "Aircraft database installed"
+    info "Downloading aircraft database (tar1090-db)..."
+    local csv_url="https://raw.githubusercontent.com/wiedehopf/tar1090-db/csv/aircraft.csv.gz"
+    if curl -fsSL -o "${DATA_DIR}/aircraft.csv.gz" "$csv_url"; then
+        success "Aircraft database installed ($(du -h "${DATA_DIR}/aircraft.csv.gz" | cut -f1) compressed)"
+    else
+        warn "Aircraft database download failed — enrichment will be limited"
     fi
 }
 
