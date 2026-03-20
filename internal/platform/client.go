@@ -105,10 +105,17 @@ type IngestRequest struct {
 	Sightings []IngestSighting `json:"sightings"`
 }
 
+// IngestRoute is a SWIM-sourced route returned in the ingest response.
+type IngestRoute struct {
+	Origin      string `json:"origin"`
+	Destination string `json:"destination"`
+}
+
 // IngestResponse contains enrichment data returned from the platform.
 type IngestResponse struct {
-	RarityScores map[string]int `json:"rarity_scores"` // icao_hex → score
-	Accepted     int            `json:"accepted"`
+	Accepted     int                       `json:"accepted"`
+	RarityScores map[string]int            `json:"rarity_scores,omitempty"`
+	Routes       map[string]IngestRoute    `json:"routes,omitempty"` // callsign → route
 }
 
 // Ingest sends a batch of aircraft sightings to the platform.

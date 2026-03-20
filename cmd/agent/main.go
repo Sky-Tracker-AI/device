@@ -281,10 +281,10 @@ func main() {
 		log.Printf("Updater: checking GitHub releases daily")
 	}
 
-	// --- Route Lookup ---
-	routeLookup := routes.New()
-	routeAdapter := &routeAdapterImpl{lookup: routeLookup}
-	log.Printf("Routes: adsbdb.com lookup enabled")
+	// --- Route Cache (fed by platform ingest response) ---
+	routeCache := routes.New()
+	routeAdapter := &routeAdapterImpl{cache: routeCache}
+	log.Printf("Routes: platform SWIM feed")
 
 	// --- HTTP + WebSocket Server ---
 	uiDir := findUIDir()
@@ -310,7 +310,7 @@ func main() {
 
 	// --- Platform Sync (background) ---
 	if platformClient.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter)
+		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -397,13 +397,13 @@ func findAircraftCSV() string {
 	return "data/aircraft.csv.gz"
 }
 
-// routeAdapterImpl adapts routes.Lookup to server.RouteLookup.
+// routeAdapterImpl adapts routes.Cache to server.RouteLookup.
 type routeAdapterImpl struct {
-	lookup *routes.Lookup
+	cache *routes.Cache
 }
 
 func (r *routeAdapterImpl) Get(callsign string) *server.RouteInfo {
-	route := r.lookup.Get(callsign)
+	route := r.cache.Get(callsign)
 	if route == nil {
 		return nil
 	}
@@ -438,7 +438,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter) {
+func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -501,7 +501,7 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 			}
 
 			// Try to ingest.
-			_, err := client.Ingest(ctx, platform.IngestRequest{Sightings: sightings})
+			ingestResp, err := client.Ingest(ctx, platform.IngestRequest{Sightings: sightings})
 			if err != nil {
 				// Queue for later.
 				queueSightings := make([]queue.Sighting, 0, len(sightings))
@@ -521,6 +521,15 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 				}
 				q.Enqueue(queueSightings)
 				continue
+			}
+
+			// Feed SWIM routes from the ingest response into the local cache.
+			if ingestResp != nil && len(ingestResp.Routes) > 0 {
+				routeData := make(map[string]routes.RouteData, len(ingestResp.Routes))
+				for cs, r := range ingestResp.Routes {
+					routeData[cs] = routes.RouteData{Origin: r.Origin, Destination: r.Destination}
+				}
+				routeCache.Update(routeData)
 			}
 
 			// If ingest succeeded, also try to drain the queue.
