@@ -472,16 +472,17 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 				}
 				dist := geo.HaversineNM(pos.Lat, pos.Lon, *a.Lat, *a.Lon)
 				typeCode := ""
+				isLADD := false
 				if enricher != nil {
 					if info := enricher.LookupAircraft(a.Hex); info != nil {
 						typeCode = info.TypeCode
+						isLADD = info.LADD
 					}
 				}
-				sightings = append(sightings, platform.IngestSighting{
+
+				s := platform.IngestSighting{
 					Timestamp: time.Now().UnixMilli(),
 					ICAOHex:   a.Hex,
-					Callsign:  a.Callsign(),
-					Type:      typeCode,
 					Altitude:  a.Altitude(),
 					Speed:     a.Speed(),
 					Heading:   a.Heading(),
@@ -489,8 +490,14 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 					Lon:       *a.Lon,
 					Distance:  dist,
 					VertRate:  a.VertRate(),
-					Squawk:    a.Squawk,
-				})
+				}
+				if !isLADD {
+					// LADD: send position for coverage stats but strip identifying fields.
+					s.Callsign = a.Callsign()
+					s.Type = typeCode
+					s.Squawk = a.Squawk
+				}
+				sightings = append(sightings, s)
 			}
 
 			// Try to ingest.
