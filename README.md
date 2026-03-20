@@ -16,18 +16,20 @@ Open-source on-device software that turns any Linux single-board computer with a
 curl -sSL https://get.skytracker.ai | sudo bash
 ```
 
-This installs dump1090-fa, GPS support, the SkyTracker agent, and starts everything as a systemd service. Your station location is auto-detected from IP. See [skytracker.ai/setup](https://skytracker.ai/setup) for the full guide.
+This installs readsb (with RTL-SDR support), GPS support, the SkyTracker agent, and starts everything as a systemd service. It also sets up a Chromium kiosk for the display and downloads the [tar1090-db](https://github.com/wiedehopf/tar1090-db) aircraft database. Your station location is auto-detected from IP. See [skytracker.ai/setup](https://skytracker.ai/setup) for the full guide.
 
 ### Manual Install
 
 ```bash
-# Install system dependencies
-sudo apt install dump1090-fa gpsd sqlite3
-
-# Download the latest agent binary and UI
+# Download the latest agent binary
 curl -L https://github.com/Sky-Tracker-AI/device/releases/latest/download/skytracker-agent-linux-arm64 \
     -o /usr/local/bin/skytracker-agent
 chmod +x /usr/local/bin/skytracker-agent
+
+# Download the aircraft database
+mkdir -p /opt/skytracker/data
+curl -L https://raw.githubusercontent.com/wiedehopf/tar1090-db/csv/aircraft.csv.gz \
+    -o /opt/skytracker/data/aircraft.csv.gz
 
 # Start the agent
 skytracker-agent --config /etc/skytracker/config.yaml
@@ -70,7 +72,7 @@ device/
 ├── internal/              # Agent internals
 │   ├── adsb/              # ADS-B polling (dump1090-fa)
 │   ├── config/            # YAML configuration
-│   ├── enrichment/        # Aircraft type + airline lookup (SQLite)
+│   ├── enrichment/        # Aircraft type + airline lookup (tar1090-db CSV)
 │   ├── geo/               # Haversine distance, bearing
 │   ├── gpsd/              # GPS daemon client
 │   ├── platform/          # skytracker.ai API client
@@ -100,6 +102,20 @@ device/
 
 Any Linux SBC with USB works. Raspberry Pi is recommended but not required. A display is optional — the agent works headless and sends data to [skytracker.ai/map](https://skytracker.ai/map).
 
+## Aircraft Data & Privacy
+
+Aircraft enrichment (type, registration, operator) comes from [tar1090-db](https://github.com/wiedehopf/tar1090-db), a community-maintained database of 619K+ aircraft. The database auto-updates weekly.
+
+### LADD Compliance
+
+The agent respects FAA **LADD** (Limiting Aircraft Data Displayed) flags. LADD-flagged aircraft:
+
+- **Are shown** on the local radar display (position data is received over the air via ADS-B and is not subject to LADD)
+- **Have identifying info suppressed** — registration, owner, and operator are stripped from WebSocket broadcasts and platform ingest
+- Type code and type name are shown (describes the aircraft model, not the specific tail)
+
+**PIA** (Privacy ICAO Address) aircraft have their registration stripped at load time. **Military** aircraft are flagged for optional UI treatment.
+
 ## Contributing
 
 We welcome contributions! Here's how to get started.
@@ -107,7 +123,7 @@ We welcome contributions! Here's how to get started.
 ### Setting Up
 
 1. Fork the repo and clone your fork
-2. Install [Go 1.21+](https://go.dev/dl/)
+2. Install [Go 1.23+](https://go.dev/dl/)
 3. Run `go build ./cmd/agent` to verify the build
 4. Run `./skytracker-agent --mock` to start with synthetic data
 5. Open `http://localhost:8080` to see the display UI
@@ -142,6 +158,9 @@ We welcome contributions! Here's how to get started.
 - **Display UI** (`ui/`) — Canvas-based radar, aircraft list, setup/claim screen. No build tools.
 
 The agent auto-registers with skytracker.ai on first boot. No API key or manual configuration is needed — users claim their device by scanning a QR code shown on the display.
+
+- **Enrichment** (`internal/enrichment/`) — loads tar1090-db CSV (619K aircraft), applies LADD/PIA suppression, auto-updates weekly from GitHub
+- **OTA updater** (`internal/updater/`) — checks GitHub Releases daily, stages updates with SHA256 verification, applies on restart
 
 ### Code of Conduct
 
