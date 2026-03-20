@@ -225,8 +225,12 @@ func main() {
 	}
 	platformClient := platform.NewClient(cfg.Platform.Endpoint, apiKey)
 
-	// Auto-register if not yet registered.
-	if !agentState.IsRegistered() {
+	// Auto-register if not yet registered. Never register mock stations with production.
+	if *mockMode {
+		log.Printf("[platform] mock mode — skipping registration and platform sync")
+		cfg.Platform.Endpoint = ""
+	}
+	if !*mockMode && !agentState.IsRegistered() {
 		pos := gpsProvider.Position()
 		hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		regResp, err := platformClient.Register(ctx, platform.RegisterRequest{
@@ -309,7 +313,7 @@ func main() {
 	}()
 
 	// --- Platform Sync (background) ---
-	if platformClient.IsConfigured() && dataQueue != nil {
+	if !*mockMode && platformClient.IsConfigured() && dataQueue != nil {
 		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache)
 	}
 
