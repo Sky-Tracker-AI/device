@@ -23,11 +23,11 @@ URL="${1:-http://localhost:8888}"
 
 # ── Disable screen blanking and screensaver ──────────────────────────────────
 
-# X11 screensaver off
-if command -v xset &> /dev/null; then
-    xset s off          # Disable screen saver
-    xset -dpms 2>/dev/null || true  # Disable DPMS (not all X servers support it)
-    xset s noblank      # Don't blank the screen
+# X11 screensaver off (skipped silently on Wayland where DISPLAY is unset)
+if command -v xset &> /dev/null && [[ -n "${DISPLAY:-}" ]]; then
+    xset s off || true
+    xset -dpms 2>/dev/null || true
+    xset s noblank || true
 fi
 
 # Wayland / wlr-randr alternative (for newer Pi OS with Wayland)
