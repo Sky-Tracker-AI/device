@@ -24,8 +24,10 @@ jobs:
       - name: Generate checksum
         run: sha256sum skytracker-agent-linux-arm64 > skytracker-agent-linux-arm64.sha256
 
-      - name: Upload release assets
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
-        run: gh release upload "$TAG_NAME" skytracker-agent-linux-arm64 skytracker-agent-linux-arm64.sha256 --clobber
+        run: |
+          gh release create "$TAG_NAME" --generate-notes || true
+          gh release upload "$TAG_NAME" skytracker-agent-linux-arm64 skytracker-agent-linux-arm64.sha256 --clobber
