@@ -129,7 +129,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load state: %v", err)
 	}
-	log.Printf("Serial: %s (registered: %v, claimed: %v)", agentState.Serial, agentState.IsRegistered(), agentState.Claimed)
+	log.Printf("Serial: %s (registered: %v, claimed: %v)", agentState.GetSerial(), agentState.IsRegistered(), agentState.GetClaimed())
 
 	log.Printf("Station: %s (sharing: %s)", cfg.Station.Name, cfg.Station.Sharing)
 	log.Printf("Display port: %d", cfg.Display.Port)
@@ -248,11 +248,11 @@ func main() {
 
 	// --- Platform Client ---
 	// Use API key from state (auto-registration) or config (manual).
-	apiKey := agentState.APIKey
+	apiKey := agentState.GetAPIKey()
 	if apiKey == "" {
 		apiKey = cfg.Platform.APIKey
 	}
-	platformClient := platform.NewClient(cfg.Platform.Endpoint, apiKey)
+	platHolder := &platformClientHolder{client: platform.NewClient(cfg.Platform.Endpoint, apiKey)}
 
 	// Auto-register if not yet registered. Never register mock stations with production.
 	if *mockMode {
@@ -262,8 +262,8 @@ func main() {
 	if !*mockMode && !agentState.IsRegistered() {
 		pos := gpsProvider.Position()
 		hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-		regResp, err := platformClient.Register(ctx, platform.RegisterRequest{
-			Serial:       agentState.Serial,
+		regResp, err := platHolder.Get().Register(ctx, platform.RegisterRequest{
+			Serial:       agentState.GetSerial(),
 			HardwareInfo: hwInfo,
 			AgentVersion: version,
 			Lat:          pos.Lat,
@@ -272,20 +272,17 @@ func main() {
 		if err != nil {
 			log.Printf("[platform] registration failed (will retry): %v", err)
 		} else {
-			agentState.DeviceID = regResp.DeviceID
-			agentState.APIKey = regResp.APIKey
-			agentState.StationID = regResp.StationID
-			agentState.ClaimCode = regResp.ClaimCode
+			agentState.SetRegistration(regResp.DeviceID, regResp.APIKey, regResp.StationID, regResp.ClaimCode)
 			if err := agentState.Save(); err != nil {
 				log.Printf("[platform] failed to save state: %v", err)
 			}
 			// Re-create client with new API key.
-			platformClient = platform.NewClient(cfg.Platform.Endpoint, agentState.APIKey)
+			platHolder.Set(platform.NewClient(cfg.Platform.Endpoint, agentState.GetAPIKey()))
 			log.Printf("[platform] registered: device=%s station=%s claim_code=%s",
-				agentState.DeviceID, agentState.StationID, agentState.ClaimCode)
+				agentState.GetDeviceID(), agentState.GetStationID(), agentState.GetClaimCode())
 		}
 	}
-	platformClient.LogConnectivity()
+	platHolder.Get().LogConnectivity()
 
 	// --- Claim State Provider ---
 	claimProv := &claimStateProviderImpl{
@@ -350,8 +347,8 @@ func main() {
 		bleService.SetRegisterFunc(func(regCtx context.Context) error {
 			pos := gpsProvider.Position()
 			hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-			regResp, err := platformClient.Register(regCtx, platform.RegisterRequest{
-				Serial:       agentState.Serial,
+			regResp, err := platHolder.Get().Register(regCtx, platform.RegisterRequest{
+				Serial:       agentState.GetSerial(),
 				HardwareInfo: hwInfo,
 				AgentVersion: version,
 				Lat:          pos.Lat,
@@ -360,22 +357,19 @@ func main() {
 			if err != nil {
 				return err
 			}
-			agentState.DeviceID = regResp.DeviceID
-			agentState.APIKey = regResp.APIKey
-			agentState.StationID = regResp.StationID
-			agentState.ClaimCode = regResp.ClaimCode
+			agentState.SetRegistration(regResp.DeviceID, regResp.APIKey, regResp.StationID, regResp.ClaimCode)
 			if err := agentState.Save(); err != nil {
 				return err
 			}
-			platformClient = platform.NewClient(cfg.Platform.Endpoint, agentState.APIKey)
+			platHolder.Set(platform.NewClient(cfg.Platform.Endpoint, agentState.GetAPIKey()))
 			log.Printf("[ble] registration complete: device=%s claim_code=%s",
-				agentState.DeviceID, agentState.ClaimCode)
+				agentState.GetDeviceID(), agentState.GetClaimCode())
 			return nil
 		})
 
 		go bleService.Run(ctx)
 
-		if cfg.BLE.AutoPairOnBoot && !agentState.Claimed {
+		if cfg.BLE.AutoPairOnBoot && !agentState.GetClaimed() {
 			bleService.StartAdvertising()
 			log.Printf("[ble] auto-advertising (device unclaimed)")
 		}
@@ -385,8 +379,8 @@ func main() {
 	}
 
 	// --- Platform Sync (background) ---
-	if !*mockMode && platformClient.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService)
+	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -504,38 +498,59 @@ func (r *routeAdapterImpl) Get(callsign string) *server.RouteInfo {
 	}
 }
 
+// platformClientHolder provides thread-safe access to the platform client,
+// which may be replaced after BLE registration completes.
+type platformClientHolder struct {
+	mu     sync.RWMutex
+	client *platform.Client
+}
+
+func (h *platformClientHolder) Get() *platform.Client {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.client
+}
+
+func (h *platformClientHolder) Set(c *platform.Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.client = c
+}
+
+func (h *platformClientHolder) IsConfigured() bool {
+	c := h.Get()
+	return c != nil && c.IsConfigured()
+}
+
 // claimStateProviderImpl wraps agent state to implement server.ClaimStateProvider.
 type claimStateProviderImpl struct {
-	mu       sync.RWMutex
 	state    *state.State
 	endpoint string
 }
 
 func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
+	claimCode := c.state.GetClaimCode()
 	cs := server.ClaimState{
-		Registered:  c.state.IsRegistered(),
-		ClaimCode:   c.state.ClaimCode,
-		Claimed:     c.state.Claimed,
+		Registered: c.state.IsRegistered(),
+		ClaimCode:  claimCode,
+		Claimed:    c.state.GetClaimed(),
 	}
-	if c.state.ClaimCode != "" {
+	if claimCode != "" {
 		// Derive frontend URL from API endpoint (api.skytracker.ai → skytracker.ai).
 		frontendURL := strings.Replace(c.endpoint, "://api.", "://", 1)
-		cs.ClaimURL = frontendURL + "/claim?code=" + url.QueryEscape(c.state.ClaimCode)
+		cs.ClaimURL = frontendURL + "/claim?code=" + url.QueryEscape(claimCode)
 	}
 	return cs
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	// Poll health more frequently while unclaimed (30s vs 5m).
 	healthInterval := 30 * time.Second
-	if agentState.Claimed {
+	if agentState.GetClaimed() {
 		healthInterval = 5 * time.Minute
 	}
 	healthTicker := time.NewTicker(healthInterval)
@@ -592,7 +607,7 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 			}
 
 			// Try to ingest.
-			ingestResp, err := client.Ingest(ctx, platform.IngestRequest{Sightings: sightings})
+			ingestResp, err := holder.Get().Ingest(ctx, platform.IngestRequest{Sightings: sightings})
 			if err != nil {
 				// Queue for later.
 				queueSightings := make([]queue.Sighting, 0, len(sightings))
@@ -641,13 +656,13 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 						Distance:  s.Distance,
 					})
 				}
-				client.Ingest(ctx, platform.IngestRequest{Sightings: queuedSightings})
+				holder.Get().Ingest(ctx, platform.IngestRequest{Sightings: queuedSightings})
 			}
 
 		case <-healthTicker.C:
 			aircraft := ap.Aircraft()
 			pos := gps.Position()
-			resp, err := client.Health(ctx, platform.HealthRequest{
+			resp, err := holder.Get().Health(ctx, platform.HealthRequest{
 				Uptime:        int64(time.Since(startTime).Seconds()),
 				GPSFix:        pos.HasFix,
 				Lat:           pos.Lat,
@@ -667,12 +682,9 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 			}
 
 			// Detect when device gets claimed.
-			if resp.Claimed && !agentState.Claimed {
+			if resp.Claimed && !agentState.GetClaimed() {
 				log.Printf("[platform] device claimed! station_name=%s", resp.StationName)
-				claimProv.mu.Lock()
-				agentState.Claimed = true
-				agentState.ClaimCode = ""
-				claimProv.mu.Unlock()
+				agentState.MarkClaimed()
 
 				if err := agentState.Save(); err != nil {
 					log.Printf("[platform] failed to save claim state: %v", err)

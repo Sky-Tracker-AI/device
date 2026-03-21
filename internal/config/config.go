@@ -71,7 +71,7 @@ func Default() *Config {
 			Endpoint: "https://api.skytracker.ai",
 		},
 		Display: DisplayConfig{
-			Port:       8080,
+			Port:       8888,
 			Brightness: 100,
 			NightMode: NightModeConfig{
 				Enabled: true,

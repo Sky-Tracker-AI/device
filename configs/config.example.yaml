@@ -28,7 +28,7 @@ platform:
 
 display:
   # Port for the local web server that serves the radar UI
-  port: 8080
+  port: 8888
 
   # Display brightness (0–100)
   brightness: 100

@@ -15,9 +15,9 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 		f.Value = &n
 		return nil
 	}
-	// Not a number (e.g. "ground") — treat as altitude 0.
-	zero := 0
-	f.Value = &zero
+	// Not a number (e.g. "ground") — leave Value as nil so callers
+	// can distinguish "on ground" from "no data."
+	f.Value = nil
 	return nil
 }
 

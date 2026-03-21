@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // State holds persistent agent state across restarts.
 type State struct {
+	mu sync.RWMutex
+
 	Serial    string `json:"serial"`
 	DeviceID  string `json:"device_id,omitempty"`
 	APIKey    string `json:"api_key,omitempty"`
@@ -55,8 +58,11 @@ func Load(path string) (*State, error) {
 }
 
 // Save writes the state to disk atomically.
+// It acquires its own lock — callers must NOT hold the mutex when calling Save.
 func (s *State) Save() error {
+	s.mu.RLock()
 	data, err := json.MarshalIndent(s, "", "  ")
+	s.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
@@ -72,8 +78,88 @@ func (s *State) Save() error {
 	return nil
 }
 
+// --- Getters ---
+
+// GetSerial returns the device serial number.
+func (s *State) GetSerial() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Serial
+}
+
+// GetDeviceID returns the platform device ID.
+func (s *State) GetDeviceID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.DeviceID
+}
+
+// GetAPIKey returns the platform API key.
+func (s *State) GetAPIKey() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.APIKey
+}
+
+// GetStationID returns the platform station ID.
+func (s *State) GetStationID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.StationID
+}
+
+// GetClaimCode returns the claim code.
+func (s *State) GetClaimCode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ClaimCode
+}
+
+// GetClaimed returns whether the device has been claimed.
+func (s *State) GetClaimed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Claimed
+}
+
+// --- Setters ---
+
+// SetClaimed sets the claimed flag.
+func (s *State) SetClaimed(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Claimed = v
+}
+
+// SetClaimCode sets the claim code.
+func (s *State) SetClaimCode(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ClaimCode = v
+}
+
+// SetRegistration atomically sets all fields returned from platform registration.
+func (s *State) SetRegistration(deviceID, apiKey, stationID, claimCode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.DeviceID = deviceID
+	s.APIKey = apiKey
+	s.StationID = stationID
+	s.ClaimCode = claimCode
+}
+
+// MarkClaimed atomically sets Claimed=true and clears the ClaimCode.
+func (s *State) MarkClaimed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Claimed = true
+	s.ClaimCode = ""
+}
+
 // IsRegistered returns true if the agent has registered with the platform.
 func (s *State) IsRegistered() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.APIKey != ""
 }
 

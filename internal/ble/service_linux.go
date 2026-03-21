@@ -158,7 +158,7 @@ func (si *serviceImpl) addGATTService() error {
 				Handle: &si.claimTokenChar,
 				UUID:   charClaimToken,
 				Flags:  bluetooth.CharacteristicReadPermission | bluetooth.CharacteristicNotifyPermission,
-				Value:  []byte(si.s.agentState.ClaimCode),
+				Value:  []byte(si.s.agentState.GetClaimCode()),
 			},
 			// FC04: Provisioning State (Read, Notify)
 			{
@@ -210,7 +210,7 @@ func (si *serviceImpl) advertise(ctx context.Context) {
 	si.mu.Unlock()
 
 	// Build device name: prefix + last 6 chars of serial.
-	serial := si.s.agentState.Serial
+	serial := si.s.agentState.GetSerial()
 	suffix := serial
 	if len(suffix) > 6 {
 		suffix = suffix[len(suffix)-6:]
@@ -337,12 +337,12 @@ func (si *serviceImpl) connectWiFi(ssid, psk string) {
 		}
 
 		// Update claim token characteristic.
-		if si.s.agentState.ClaimCode != "" {
-			si.claimTokenChar.Write([]byte(si.s.agentState.ClaimCode))
+		if claimCode := si.s.agentState.GetClaimCode(); claimCode != "" {
+			si.claimTokenChar.Write([]byte(claimCode))
 		}
 
 		// If already claimed, go straight to provisioned.
-		if si.s.agentState.Claimed {
+		if si.s.agentState.GetClaimed() {
 			si.setState(StateProvisioned, "Device already claimed")
 		}
 	}()
@@ -385,7 +385,7 @@ func (si *serviceImpl) deviceInfoJSON() []byte {
 		Serial    string `json:"serial"`
 		FWVersion string `json:"fw_version"`
 	}{
-		Serial:    si.s.agentState.Serial,
+		Serial:    si.s.agentState.GetSerial(),
 		FWVersion: si.s.version,
 	}
 	data, _ := json.Marshal(info)

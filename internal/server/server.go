@@ -200,6 +200,9 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start the WebSocket broadcaster.
 	go s.broadcast(ctx)
 
+	// Start sending WebSocket ping frames to keep connections alive.
+	go s.pingClients(ctx)
+
 	// Start the HTTP server.
 	go func() {
 		log.Printf("[server] listening on %s", addr)
@@ -298,6 +301,43 @@ func (s *Server) broadcast(ctx context.Context) {
 	}
 }
 
+func (s *Server) pingClients(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			snapshot := make([]*websocket.Conn, 0, len(s.clients))
+			for conn := range s.clients {
+				snapshot = append(snapshot, conn)
+			}
+			s.mu.Unlock()
+
+			var dead []*websocket.Conn
+			for _, conn := range snapshot {
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					log.Printf("[server] ping error: %v", err)
+					conn.Close()
+					dead = append(dead, conn)
+				}
+			}
+
+			if len(dead) > 0 {
+				s.mu.Lock()
+				for _, conn := range dead {
+					delete(s.clients, conn)
+				}
+				s.mu.Unlock()
+			}
+		}
+	}
+}
+
 func (s *Server) sendUpdate() {
 	pos := s.gpsProv.Position()
 	rawAircraft := s.aircraftProv.Aircraft()
@@ -361,8 +401,14 @@ func (s *Server) sendUpdate() {
 		return enriched[i].DistanceNM < enriched[j].DistanceNM
 	})
 
+	// Snapshot state under the lock, then release before writing.
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	stationName := s.stationName
+	snapshot := make([]*websocket.Conn, 0, len(s.clients))
+	for conn := range s.clients {
+		snapshot = append(snapshot, conn)
+	}
+	s.mu.Unlock()
 
 	msg := WSMessage{
 		Type:      "aircraft_update",
@@ -370,7 +416,7 @@ func (s *Server) sendUpdate() {
 		Station: WSStation{
 			Lat:  pos.Lat,
 			Lon:  pos.Lon,
-			Name: s.stationName,
+			Name: stationName,
 		},
 		Aircraft: enriched,
 		Count:    len(enriched),
@@ -382,13 +428,23 @@ func (s *Server) sendUpdate() {
 		return
 	}
 
-	for conn := range s.clients {
+	var dead []*websocket.Conn
+	for _, conn := range snapshot {
 		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("[server] write error: %v", err)
 			conn.Close()
+			dead = append(dead, conn)
+		}
+	}
+
+	// Remove dead clients under the lock.
+	if len(dead) > 0 {
+		s.mu.Lock()
+		for _, conn := range dead {
 			delete(s.clients, conn)
 		}
+		s.mu.Unlock()
 	}
 }
 

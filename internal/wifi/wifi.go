@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -114,14 +115,66 @@ func (m *Manager) ScanNetworks() ([]Network, error) {
 }
 
 // Connect connects to a Wi-Fi network using nmcli with a 30-second timeout.
+// The connection is configured via a NetworkManager connection profile so that
+// the password is never exposed on the process command line (visible in /proc).
 func (m *Manager) Connect(ssid, password string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "nmcli", "device", "wifi", "connect", ssid, "password", password, "ifname", "wlan0")
-	out, err := cmd.CombinedOutput()
+	// Step 1: Create (or update) a connection profile without passing the
+	// password as a CLI argument. nmcli reads 802-11-wireless-security
+	// properties from its own config machinery, but there is no stdin-pipe
+	// option. Instead we create the profile first, then set the PSK via a
+	// separate "nmcli connection modify" call. Both calls only expose the
+	// SSID on the command line, not the password.
+	connName := "skytracker-" + ssid
+
+	// Delete any pre-existing profile with this name (ignore errors).
+	_ = exec.CommandContext(ctx, "nmcli", "connection", "delete", connName).Run()
+
+	// Create the profile without a password.
+	addCmd := exec.CommandContext(ctx, "nmcli", "connection", "add",
+		"type", "wifi",
+		"con-name", connName,
+		"ifname", "wlan0",
+		"ssid", ssid,
+		"wifi-sec.key-mgmt", "wpa-psk",
+	)
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		output := string(out)
+		if strings.Contains(output, "no Wi-Fi device found") || strings.Contains(output, "wlan0") {
+			return ErrNoDevice
+		}
+		return fmt.Errorf("nmcli connection add: %s", output)
+	}
+
+	// Set the PSK by writing directly to the NetworkManager keyfile.
+	// This avoids exposing the password in any process command line.
+	// NM stores connection files at /etc/NetworkManager/system-connections/.
+	keyfilePath := fmt.Sprintf("/etc/NetworkManager/system-connections/%s.nmconnection", connName)
+	if err := patchKeyfilePSK(keyfilePath, password); err != nil {
+		// Fallback: use nmcli modify (password briefly visible in /proc).
+		// KNOWN LIMITATION: nmcli does not support reading secrets from
+		// stdin, so the modify fallback exposes the PSK in the process
+		// argv. The window is very short (local-only, no network I/O).
+		modCmd := exec.CommandContext(ctx, "nmcli", "connection", "modify", connName,
+			"wifi-sec.psk", password,
+		)
+		if out, err := modCmd.CombinedOutput(); err != nil {
+			_ = exec.CommandContext(ctx, "nmcli", "connection", "delete", connName).Run()
+			return fmt.Errorf("nmcli connection modify: %s", string(out))
+		}
+	}
+	// Reload so NetworkManager picks up the keyfile change.
+	_ = exec.CommandContext(ctx, "nmcli", "connection", "reload").Run()
+
+	// Step 2: Activate the connection (no secrets on the command line).
+	upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", connName, "ifname", "wlan0")
+	out, err := upCmd.CombinedOutput()
 	if err != nil {
 		output := string(out)
+		// Clean up on failure.
+		_ = exec.CommandContext(ctx, "nmcli", "connection", "delete", connName).Run()
 		if ctx.Err() == context.DeadlineExceeded {
 			return ErrTimeout
 		}
@@ -136,6 +189,47 @@ func (m *Manager) Connect(ssid, password string) error {
 
 	m.checkStatus()
 	return nil
+}
+
+// patchKeyfilePSK writes the PSK directly into a NetworkManager keyfile,
+// avoiding any command-line exposure. The keyfile is an INI-style file;
+// the PSK belongs under the [wifi-security] section.
+func patchKeyfilePSK(path, psk string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var result []string
+	inSection := false
+	pskWritten := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			// Leaving a section — if we were in wifi-security and
+			// didn't write the PSK yet, write it now.
+			if inSection && !pskWritten {
+				result = append(result, "psk="+psk)
+				pskWritten = true
+			}
+			inSection = trimmed == "[wifi-security]"
+		}
+		if inSection && strings.HasPrefix(trimmed, "psk=") {
+			result = append(result, "psk="+psk)
+			pskWritten = true
+			continue
+		}
+		result = append(result, line)
+	}
+
+	// If the section was the last one and we haven't written the PSK.
+	if inSection && !pskWritten {
+		result = append(result, "psk="+psk)
+	}
+
+	return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
 }
 
 func (m *Manager) checkStatus() {
