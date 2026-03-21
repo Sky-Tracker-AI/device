@@ -141,7 +141,22 @@ type Server struct {
 	upgrader websocket.Upgrader
 
 	mu      sync.Mutex
-	clients map[*websocket.Conn]bool
+	clients map[*wsClient]bool
+}
+
+// wsClient wraps a WebSocket connection with a per-connection write mutex.
+// gorilla/websocket supports one concurrent reader and one concurrent writer,
+// so all writes (data, ping, close) must be serialized per connection.
+type wsClient struct {
+	conn *websocket.Conn
+	wmu  sync.Mutex
+}
+
+func (c *wsClient) writeMessage(msgType int, data []byte) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return c.conn.WriteMessage(msgType, data)
 }
 
 // NewServer creates a new server.
@@ -160,7 +175,7 @@ func NewServer(port int, stationName, uiDir string, maxRangeNM, pollIntervalMS i
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients: make(map[*websocket.Conn]bool),
+		clients: make(map[*wsClient]bool),
 	}
 }
 
@@ -227,8 +242,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	client := &wsClient{conn: conn}
+
 	s.mu.Lock()
-	s.clients[conn] = true
+	s.clients[client] = true
 	s.mu.Unlock()
 
 	log.Printf("[server] ws client connected (%d total)", len(s.clients))
@@ -237,8 +254,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			if _, ok := s.clients[conn]; ok {
-				delete(s.clients, conn)
+			if _, ok := s.clients[client]; ok {
+				delete(s.clients, client)
 				conn.Close()
 				log.Printf("[server] ws client disconnected (%d remaining)", len(s.clients))
 			}
@@ -311,26 +328,25 @@ func (s *Server) pingClients(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.mu.Lock()
-			snapshot := make([]*websocket.Conn, 0, len(s.clients))
-			for conn := range s.clients {
-				snapshot = append(snapshot, conn)
+			snapshot := make([]*wsClient, 0, len(s.clients))
+			for c := range s.clients {
+				snapshot = append(snapshot, c)
 			}
 			s.mu.Unlock()
 
-			var dead []*websocket.Conn
-			for _, conn := range snapshot {
-				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			var dead []*wsClient
+			for _, c := range snapshot {
+				if err := c.writeMessage(websocket.PingMessage, nil); err != nil {
 					log.Printf("[server] ping error: %v", err)
-					conn.Close()
-					dead = append(dead, conn)
+					c.conn.Close()
+					dead = append(dead, c)
 				}
 			}
 
 			if len(dead) > 0 {
 				s.mu.Lock()
-				for _, conn := range dead {
-					delete(s.clients, conn)
+				for _, c := range dead {
+					delete(s.clients, c)
 				}
 				s.mu.Unlock()
 			}
@@ -404,9 +420,9 @@ func (s *Server) sendUpdate() {
 	// Snapshot state under the lock, then release before writing.
 	s.mu.Lock()
 	stationName := s.stationName
-	snapshot := make([]*websocket.Conn, 0, len(s.clients))
-	for conn := range s.clients {
-		snapshot = append(snapshot, conn)
+	snapshot := make([]*wsClient, 0, len(s.clients))
+	for c := range s.clients {
+		snapshot = append(snapshot, c)
 	}
 	s.mu.Unlock()
 
@@ -428,21 +444,20 @@ func (s *Server) sendUpdate() {
 		return
 	}
 
-	var dead []*websocket.Conn
-	for _, conn := range snapshot {
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	var dead []*wsClient
+	for _, c := range snapshot {
+		if err := c.writeMessage(websocket.TextMessage, data); err != nil {
 			log.Printf("[server] write error: %v", err)
-			conn.Close()
-			dead = append(dead, conn)
+			c.conn.Close()
+			dead = append(dead, c)
 		}
 	}
 
 	// Remove dead clients under the lock.
 	if len(dead) > 0 {
 		s.mu.Lock()
-		for _, conn := range dead {
-			delete(s.clients, conn)
+		for _, c := range dead {
+			delete(s.clients, c)
 		}
 		s.mu.Unlock()
 	}
@@ -451,11 +466,11 @@ func (s *Server) sendUpdate() {
 func (s *Server) closeAllClients() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for conn := range s.clients {
-		conn.WriteMessage(websocket.CloseMessage,
+	for c := range s.clients {
+		c.writeMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down"))
-		conn.Close()
-		delete(s.clients, conn)
+		c.conn.Close()
+		delete(s.clients, c)
 	}
 }
 

@@ -31,7 +31,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.4.0"
+const version = "0.4.1"
 
 func main() {
 	var (
@@ -548,6 +548,9 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	// Registration retry helper — retries with exponential backoff on each health tick.
+	regHelper := newRegistrationHelper(holder, agentState, cfg.Platform.Endpoint)
+
 	// Poll health more frequently while unclaimed (30s vs 5m).
 	healthInterval := 30 * time.Second
 	if agentState.GetClaimed() {
@@ -660,6 +663,13 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			}
 
 		case <-healthTicker.C:
+			// Retry registration if still unregistered.
+			if !agentState.IsRegistered() {
+				regHelper.tryRegister(ctx, gps)
+				if !agentState.IsRegistered() {
+					continue // skip health report until registered
+				}
+			}
 			aircraft := ap.Aircraft()
 			pos := gps.Position()
 			resp, err := holder.Get().Health(ctx, platform.HealthRequest{
