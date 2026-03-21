@@ -61,3 +61,18 @@ advanced:
 
   # Maximum size of the offline data queue (MB) before oldest entries are dropped
   data_queue_max_mb: 100
+
+# ── BLE provisioning ─────────────────────────────────────────────────────────
+
+ble:
+  # Enable BLE provisioning (requires BlueZ on the host)
+  enabled: true
+
+  # How long the BLE advertising window stays open (seconds)
+  window_seconds: 300
+
+  # Automatically start advertising on boot when device is unclaimed
+  auto_pair_on_boot: true
+
+  # BLE device name prefix (followed by last 6 chars of serial)
+  device_name_prefix: "SkyTracker-"

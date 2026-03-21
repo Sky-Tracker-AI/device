@@ -141,6 +141,23 @@ install_gps() {
     fi
 }
 
+# ── Install Bluetooth support ────────────────────────────────────────────────
+
+install_bluetooth() {
+    if command -v bluetoothctl &>/dev/null; then
+        success "BlueZ already installed"
+    else
+        info "Installing Bluetooth support..."
+        apt-get install -y -qq bluez >/dev/null 2>&1 || {
+            warn "BlueZ install failed — BLE provisioning will be unavailable"
+            return
+        }
+        success "BlueZ installed"
+    fi
+    systemctl enable bluetooth >/dev/null 2>&1 || true
+    systemctl start bluetooth >/dev/null 2>&1 || true
+}
+
 # ── Download agent binary ────────────────────────────────────────────────────
 
 download_agent() {
@@ -275,6 +292,12 @@ advanced:
   poll_interval_ms: 1000
   max_range_nm: 250
   data_queue_max_mb: 100
+
+ble:
+  enabled: true
+  window_seconds: 300
+  auto_pair_on_boot: true
+  device_name_prefix: "SkyTracker-"
 CFGEOF
 
     success "Config created at ${CONFIG_FILE}"
@@ -407,6 +430,7 @@ main() {
     detect_arch
     install_adsb_decoder
     install_gps
+    install_bluetooth
     download_agent
     download_ui
     download_enrichment

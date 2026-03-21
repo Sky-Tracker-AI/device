@@ -5,8 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"net/url"
+	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/skytracker/skytracker-device/internal/adsb"
+	"github.com/skytracker/skytracker-device/internal/ble"
 	"github.com/skytracker/skytracker-device/internal/config"
 	"github.com/skytracker/skytracker-device/internal/enrichment"
 	"github.com/skytracker/skytracker-device/internal/geo"
@@ -29,7 +31,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.2.2"
+const version = "0.3.0"
 
 func main() {
 	var (
@@ -37,12 +39,38 @@ func main() {
 		configPath = flag.String("config", "", "Path to config file (default: auto-detect)")
 		rollback   = flag.Bool("rollback", false, "Rollback to previous agent version")
 		showVer    = flag.Bool("version", false, "Print version and exit")
+		pairMode   = flag.Bool("pair", false, "Trigger BLE pairing mode on running agent")
 	)
 	flag.Parse()
 
 	if *showVer {
 		fmt.Printf("skytracker-agent v%s\n", version)
 		os.Exit(0)
+	}
+
+	// --pair: send SIGUSR1 to the running agent and exit.
+	if *pairMode {
+		out, err := exec.Command("pidof", "skytracker-agent").Output()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "No running skytracker-agent found")
+			os.Exit(1)
+		}
+		pidStr := strings.TrimSpace(string(out))
+		// pidof may return multiple PIDs; take the first that isn't us.
+		for _, p := range strings.Fields(pidStr) {
+			pid := 0
+			fmt.Sscanf(p, "%d", &pid)
+			if pid > 0 && pid != os.Getpid() {
+				proc, err := os.FindProcess(pid)
+				if err == nil {
+					proc.Signal(syscall.SIGUSR1)
+					fmt.Printf("BLE pairing mode activated (PID %d) — advertising for 5 minutes\n", pid)
+					os.Exit(0)
+				}
+			}
+		}
+		fmt.Fprintln(os.Stderr, "Could not signal running agent")
+		os.Exit(1)
 	}
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
@@ -112,7 +140,7 @@ func main() {
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 
 	// Default mock station location: Denver, CO.
 	mockLat := 39.8561
@@ -207,12 +235,13 @@ func main() {
 	}
 
 	// --- WiFi ---
+	var wifiMgr *wifi.Manager
 	if *mockMode {
 		mockWifi := wifi.NewMockManager()
 		go mockWifi.Run(ctx)
 		log.Printf("WiFi: mock (simulated connected)")
 	} else {
-		wifiMgr := wifi.NewManager()
+		wifiMgr = wifi.NewManager()
 		go wifiMgr.Run(ctx)
 		log.Printf("WiFi: manager started")
 	}
@@ -312,17 +341,75 @@ func main() {
 		}
 	}()
 
+	// --- BLE Provisioning ---
+	var bleService *ble.Service
+	if !*mockMode && cfg.BLE.Enabled {
+		bleService = ble.NewService(cfg.BLE, wifiMgr, agentState, version)
+
+		// Wire up registration callback for first-boot scenario.
+		bleService.SetRegisterFunc(func(regCtx context.Context) error {
+			pos := gpsProvider.Position()
+			hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+			regResp, err := platformClient.Register(regCtx, platform.RegisterRequest{
+				Serial:       agentState.Serial,
+				HardwareInfo: hwInfo,
+				AgentVersion: version,
+				Lat:          pos.Lat,
+				Lon:          pos.Lon,
+			})
+			if err != nil {
+				return err
+			}
+			agentState.DeviceID = regResp.DeviceID
+			agentState.APIKey = regResp.APIKey
+			agentState.StationID = regResp.StationID
+			agentState.ClaimCode = regResp.ClaimCode
+			if err := agentState.Save(); err != nil {
+				return err
+			}
+			platformClient = platform.NewClient(cfg.Platform.Endpoint, agentState.APIKey)
+			log.Printf("[ble] registration complete: device=%s claim_code=%s",
+				agentState.DeviceID, agentState.ClaimCode)
+			return nil
+		})
+
+		go bleService.Run(ctx)
+
+		if cfg.BLE.AutoPairOnBoot && !agentState.Claimed {
+			bleService.StartAdvertising()
+			log.Printf("[ble] auto-advertising (device unclaimed)")
+		}
+		log.Printf("[ble] service started (window=%ds)", cfg.BLE.WindowSeconds)
+	} else {
+		log.Printf("[ble] disabled (mock=%v, enabled=%v)", *mockMode, cfg.BLE.Enabled)
+	}
+
 	// --- Platform Sync (background) ---
 	if !*mockMode && platformClient.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache)
+		go runPlatformSync(ctx, platformClient, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
 
-	// Wait for shutdown signal.
-	sig := <-sigCh
-	log.Printf("Received signal %v, shutting down...", sig)
-	cancel()
+	// Signal handling loop: SIGUSR1 triggers BLE, INT/TERM shuts down.
+	go func() {
+		for sig := range sigCh {
+			switch sig {
+			case syscall.SIGUSR1:
+				if bleService != nil {
+					bleService.StartAdvertising()
+					log.Printf("[ble] SIGUSR1 received — advertising triggered")
+				}
+			case syscall.SIGINT, syscall.SIGTERM:
+				log.Printf("Received signal %v, shutting down...", sig)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	// Wait for context cancellation.
+	<-ctx.Done()
 
 	// Give goroutines time to clean up.
 	time.Sleep(2 * time.Second)
@@ -442,7 +529,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache) {
+func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -589,6 +676,10 @@ func runPlatformSync(ctx context.Context, client *platform.Client, ap aircraftIn
 
 				if err := agentState.Save(); err != nil {
 					log.Printf("[platform] failed to save claim state: %v", err)
+				}
+
+				if bleService != nil {
+					bleService.OnClaimed()
 				}
 
 				// Switch to slower health polling now that we're claimed.

@@ -14,6 +14,7 @@ type Config struct {
 	Display  DisplayConfig  `yaml:"display"`
 	Sources  SourcesConfig  `yaml:"sources"`
 	Advanced AdvancedConfig `yaml:"advanced"`
+	BLE      BLEConfig      `yaml:"ble"`
 }
 
 type StationConfig struct {
@@ -52,6 +53,13 @@ type AdvancedConfig struct {
 	DataQueueMaxMB int `yaml:"data_queue_max_mb"`
 }
 
+type BLEConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	WindowSeconds    int    `yaml:"window_seconds"`
+	AutoPairOnBoot   bool   `yaml:"auto_pair_on_boot"`
+	DeviceNamePrefix string `yaml:"device_name_prefix"`
+}
+
 // Default returns a Config populated with default values.
 func Default() *Config {
 	return &Config{
@@ -80,6 +88,12 @@ func Default() *Config {
 			PollIntervalMS: 1000,
 			MaxRangeNM:     250,
 			DataQueueMaxMB: 100,
+		},
+		BLE: BLEConfig{
+			Enabled:          true,
+			WindowSeconds:    300,
+			AutoPairOnBoot:   true,
+			DeviceNamePrefix: "SkyTracker-",
 		},
 	}
 }
