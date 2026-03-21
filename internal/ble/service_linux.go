@@ -325,14 +325,26 @@ func (si *serviceImpl) connectWiFi(ssid, psk string) {
 		regFn := si.registerFunc
 		si.mu.Unlock()
 
-		// If device is not yet registered, attempt registration.
+		// If device is not yet registered, attempt registration with retries.
+		// DNS may not be ready immediately after WiFi connects.
 		if !si.s.agentState.IsRegistered() && regFn != nil {
 			si.setState(StateClaimPending, "Registering device...")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			if err := regFn(ctx); err != nil {
-				log.Printf("[ble] registration after wifi failed: %v", err)
+			var regErr error
+			for attempt := 1; attempt <= 5; attempt++ {
+				if attempt > 1 {
+					time.Sleep(3 * time.Second)
+					log.Printf("[ble] registration retry %d/5", attempt)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				regErr = regFn(ctx)
+				cancel()
+				if regErr == nil {
+					break
+				}
+				log.Printf("[ble] registration attempt %d failed: %v", attempt, regErr)
+			}
+			if regErr != nil {
+				si.setState(StateError, "Registration failed. Check internet connection.")
 			}
 		}
 
