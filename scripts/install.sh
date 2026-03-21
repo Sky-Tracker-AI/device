@@ -374,18 +374,34 @@ GKEOF
         fi
     done
 
-    # Create autostart entry for kiosk browser
-    local user_autostart="${user_home}/.config/autostart"
-    mkdir -p "$user_autostart"
-    cat > "${user_autostart}/skytracker-kiosk.desktop" << KIOSKEOF
+    # Create autostart entry for kiosk browser.
+    # Detect compositor: labwc (Wayland, Pi OS Bookworm+) vs LXDE (X11, older Pi OS).
+    local kiosk_url="http://localhost:${DISPLAY_PORT}"
+
+    if [[ -d "${user_home}/.config/labwc" ]]; then
+        # labwc (Wayland) — uses ~/.config/labwc/autostart
+        local labwc_autostart="${user_home}/.config/labwc/autostart"
+        # Append kiosk line if not already present
+        if ! grep -q "kiosk.sh" "$labwc_autostart" 2>/dev/null; then
+            echo "${kiosk_dst} ${kiosk_url} &" >> "$labwc_autostart"
+        fi
+        chown "${desktop_user}:" "$labwc_autostart"
+        info "Kiosk autostart: labwc (Wayland)"
+    else
+        # LXDE / XDG autostart — uses ~/.config/autostart/*.desktop
+        local user_autostart="${user_home}/.config/autostart"
+        mkdir -p "$user_autostart"
+        cat > "${user_autostart}/skytracker-kiosk.desktop" << KIOSKEOF
 [Desktop Entry]
 Type=Application
 Name=SkyTracker Kiosk
-Exec=${kiosk_dst} http://localhost:${DISPLAY_PORT}
+Exec=${kiosk_dst} ${kiosk_url}
 Hidden=false
 X-GNOME-Autostart-enabled=true
 KIOSKEOF
-    chown -R "${desktop_user}:" "${user_autostart}"
+        chown -R "${desktop_user}:" "${user_autostart}"
+        info "Kiosk autostart: LXDE (X11)"
+    fi
 
     success "Kiosk display configured (launches on login)"
 }
