@@ -15,6 +15,14 @@ type Config struct {
 	Sources  SourcesConfig  `yaml:"sources"`
 	Advanced AdvancedConfig `yaml:"advanced"`
 	BLE      BLEConfig      `yaml:"ble"`
+	Omni     OmniConfig     `yaml:"omni"`
+}
+
+type OmniConfig struct {
+	Enabled          bool    `yaml:"enabled"`
+	MinElevation     float64 `yaml:"min_elevation"`
+	TLERefreshHrs    int     `yaml:"tle_refresh_hrs"`
+	SchedulerEnabled bool    `yaml:"scheduler_enabled"`
 }
 
 type StationConfig struct {
@@ -94,6 +102,12 @@ func Default() *Config {
 			WindowSeconds:    300,
 			AutoPairOnBoot:   true,
 			DeviceNamePrefix: "SkyTracker-",
+		},
+		Omni: OmniConfig{
+			Enabled:          true,
+			MinElevation:     5.0,
+			TLERefreshHrs:    12,
+			SchedulerEnabled: true,
 		},
 	}
 }

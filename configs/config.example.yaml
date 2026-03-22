@@ -76,3 +76,20 @@ ble:
 
   # BLE device name prefix (followed by last 6 chars of serial)
   device_name_prefix: "SkyTracker-"
+
+# ── Omni multi-signal support ──────────────────────────────────────────────
+
+# omni:
+#   # Enable Omni subsystem (auto-detects USB RTL-SDR hardware)
+#   # When true, agent detects SDR dongles and runs satellite pass predictions.
+#   # If no SDR hardware is found, runs in prediction-only mode.
+#   enabled: true
+#
+#   # Minimum elevation (degrees) for satellite pass predictions
+#   min_elevation: 5.0
+#
+#   # TLE refresh interval (hours) — how often to fetch updated TLEs from CelesTrak
+#   tle_refresh_hrs: 12
+#
+#   # Enable SDR scheduler — assigns decoders to SDRs during satellite passes
+#   scheduler_enabled: true

@@ -25,13 +25,16 @@ import (
 	"github.com/skytracker/skytracker-device/internal/platform"
 	"github.com/skytracker/skytracker-device/internal/queue"
 	"github.com/skytracker/skytracker-device/internal/routes"
+	"github.com/skytracker/skytracker-device/internal/sat"
+	"github.com/skytracker/skytracker-device/internal/scheduler"
+	"github.com/skytracker/skytracker-device/internal/sdr"
 	"github.com/skytracker/skytracker-device/internal/server"
 	"github.com/skytracker/skytracker-device/internal/state"
 	"github.com/skytracker/skytracker-device/internal/updater"
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.4.1"
+const version = "0.5.0"
 
 func main() {
 	var (
@@ -378,9 +381,91 @@ func main() {
 		log.Printf("[ble] disabled (mock=%v, enabled=%v)", *mockMode, cfg.BLE.Enabled)
 	}
 
+	// --- Omni Subsystem (SDR + Satellite + Scheduler) ---
+	var omniMode sdr.Mode
+	var satService *sat.Service
+	var sched *scheduler.Scheduler
+	var omniSDRs []sdr.SDRDevice
+
+	if cfg.Omni.Enabled {
+		// Detect SDR hardware.
+		if *mockMode {
+			// In mock mode, create synthetic SDRs for testing.
+			mockHandles := []sdr.SDRHandle{
+				&sdr.MockSDRHandle{MockID: "mock-sdr-0", MockSerial: "SKT-MOCK-0", MockTuner: "R820T"},
+			}
+			omniMode = sdr.ModeOmniOnly
+			log.Printf("[omni] mock mode: 1 synthetic SDR, mode=%s", omniMode)
+
+			// Start satellite service (real TLE fetch even in mock mode).
+			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
+			go satService.Start(ctx)
+
+			// Set station position from GPS.
+			pos := gpsProvider.Position()
+			if pos.Lat != 0 || pos.Lon != 0 {
+				satService.SetStation(pos.Lat, pos.Lon, 0)
+			}
+
+			// Start scheduler with mock SDRs.
+			if cfg.Omni.SchedulerEnabled {
+				sched = scheduler.NewScheduler(mockHandles, satService, nil)
+				go sched.Run(ctx)
+				log.Printf("[omni] scheduler started with %d mock SDR(s)", len(mockHandles))
+			}
+		} else {
+			// Real hardware detection.
+			allSDRs := sdr.Detect()
+			readsbSerial, readsbActive := sdr.DetectReadsbSerial()
+
+			if readsbActive {
+				log.Printf("[omni] readsb active, using device serial=%s", readsbSerial)
+				omniSDRs = sdr.FilterAvailable(allSDRs, readsbSerial)
+			} else {
+				omniSDRs = allSDRs
+			}
+
+			omniMode = sdr.DetermineMode(readsbActive, len(omniSDRs))
+			log.Printf("[omni] detected %d total SDR(s), %d available for omni, mode=%s",
+				len(allSDRs), len(omniSDRs), omniMode)
+
+			// Program serial numbers on unconfigured dongles.
+			if len(omniSDRs) > 0 {
+				programmed := sdr.ProgramSerials(omniSDRs)
+				if programmed > 0 {
+					log.Printf("[omni] programmed serial numbers on %d SDR(s)", programmed)
+				}
+			}
+
+			// Start satellite service.
+			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
+			go satService.Start(ctx)
+
+			// Set station position.
+			pos := gpsProvider.Position()
+			if pos.Lat != 0 || pos.Lon != 0 {
+				satService.SetStation(pos.Lat, pos.Lon, 0)
+			}
+
+			// Start scheduler if we have available SDRs.
+			if len(omniSDRs) > 0 && cfg.Omni.SchedulerEnabled {
+				handles := make([]sdr.SDRHandle, len(omniSDRs))
+				for i := range omniSDRs {
+					handles[i] = sdr.NewHandle(omniSDRs[i])
+				}
+				sched = scheduler.NewScheduler(handles, satService, nil)
+				go sched.Run(ctx)
+				log.Printf("[omni] scheduler started with %d SDR(s)", len(handles))
+			}
+		}
+	} else {
+		omniMode = sdr.ModeNone
+		log.Printf("[omni] disabled by config")
+	}
+
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -544,7 +629,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -672,7 +757,7 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			}
 			aircraft := ap.Aircraft()
 			pos := gps.Position()
-			resp, err := holder.Get().Health(ctx, platform.HealthRequest{
+			healthReq := platform.HealthRequest{
 				Uptime:        int64(time.Since(startTime).Seconds()),
 				GPSFix:        pos.HasFix,
 				Lat:           pos.Lat,
@@ -681,7 +766,55 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				AgentVersion:  version,
 				LastSync:      time.Now().Unix(),
 				QueueSize:     q.Count(),
-			})
+				OmniMode:      string(omniMode),
+			}
+
+			// Populate omni health fields.
+			if len(omniSDRs) > 0 {
+				healthReq.SDRCount = len(omniSDRs)
+				serials := make([]string, 0, len(omniSDRs))
+				for _, d := range omniSDRs {
+					if d.SerialNumber != "" {
+						serials = append(serials, d.SerialNumber)
+					}
+				}
+				healthReq.SDRSerials = serials
+			}
+			if satService != nil {
+				healthReq.TLECount = satService.TLECount()
+				if age := satService.TLEAge(); age > 0 {
+					healthReq.TLEAge = int64(age.Seconds())
+				}
+				upcoming := satService.GetUpcomingPasses()
+				healthReq.SatellitePasses24h = len(upcoming)
+				// Send up to 10 structured upcoming passes for the platform dashboard.
+				limit := len(upcoming)
+				if limit > 10 {
+					limit = 10
+				}
+				passes := make([]platform.UpcomingPass, 0, limit)
+				for _, p := range upcoming[:limit] {
+					freq := 0.0
+					if len(p.Frequencies) > 0 {
+						freq = p.Frequencies[0]
+					}
+					passes = append(passes, platform.UpcomingPass{
+						NoradID:      p.NoradID,
+						SatName:      p.Name,
+						Frequency:    freq,
+						AOSPredicted: p.AOS.Unix(),
+						LOSPredicted: p.LOS.Unix(),
+						MaxElevation: p.MaxElevation,
+					})
+				}
+				healthReq.UpcomingPasses = passes
+			}
+			if sched != nil {
+				healthReq.SchedulerState = sched.State()
+				healthReq.ActiveDecoder = sched.ActiveDecoder()
+			}
+
+			resp, err := holder.Get().Health(ctx, healthReq)
 			if err != nil {
 				continue
 			}

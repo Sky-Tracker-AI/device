@@ -156,14 +156,35 @@ func (c *Client) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse
 
 // HealthRequest is the payload for device health reporting.
 type HealthRequest struct {
-	Uptime        int64   `json:"uptime_seconds"`
-	GPSFix        bool    `json:"gps_fix"`
-	Lat           float64 `json:"lat"`
-	Lon           float64 `json:"lon"`
-	AircraftCount int     `json:"aircraft_count"`
-	AgentVersion  string  `json:"agent_version"`
-	LastSync      int64   `json:"last_sync_timestamp"`
-	QueueSize     int     `json:"queue_size"`
+	Uptime         int64    `json:"uptime_seconds"`
+	GPSFix         bool     `json:"gps_fix"`
+	Lat            float64  `json:"lat"`
+	Lon            float64  `json:"lon"`
+	AircraftCount  int      `json:"aircraft_count"`
+	AgentVersion   string   `json:"agent_version"`
+	LastSync       int64    `json:"last_sync_timestamp"`
+	QueueSize      int      `json:"queue_size"`
+
+	// Omni extensions (omitted by ADS-B-only devices).
+	SDRCount           int              `json:"sdr_count,omitempty"`
+	SDRSerials         []string         `json:"sdr_serials,omitempty"`
+	TLEAge             int64            `json:"tle_age_seconds,omitempty"`
+	TLECount           int              `json:"tle_count,omitempty"`
+	SatellitePasses24h int              `json:"satellite_passes_24h,omitempty"`
+	UpcomingPasses     []UpcomingPass   `json:"upcoming_passes,omitempty"`
+	SchedulerState     string           `json:"scheduler_state,omitempty"`
+	ActiveDecoder      string           `json:"active_decoder,omitempty"`
+	OmniMode           string           `json:"omni_mode,omitempty"`
+}
+
+// UpcomingPass is a device-predicted satellite pass sent in the health report.
+type UpcomingPass struct {
+	NoradID      int     `json:"norad_id"`
+	SatName      string  `json:"sat_name"`
+	Frequency    float64 `json:"frequency"`
+	AOSPredicted int64   `json:"aos_predicted"`
+	LOSPredicted int64   `json:"los_predicted"`
+	MaxElevation float64 `json:"max_elevation"`
 }
 
 // HealthResponse contains any updates from the platform.

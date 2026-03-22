@@ -5,6 +5,7 @@ go 1.25.3
 require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gorilla/websocket v1.5.3
+	github.com/joshuaferrara/go-satellite v0.0.0-20220611180459-512638c64e5b
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.37.1
 	tinygo.org/x/bluetooth v0.14.0
@@ -17,6 +18,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/saltosystems/winrt-go v0.0.0-20240509164145-4f7860a3bd2b // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
