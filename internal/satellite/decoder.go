@@ -29,6 +29,8 @@ var (
 )
 
 // SatDumpDecoder implements scheduler.Decoder by managing a SatDump process.
+// It uses rtl_tcp as an intermediary to work around an RTL-SDR Blog V4 bug
+// where SatDump's direct RTL-SDR source fails to apply gain settings.
 type SatDumpDecoder struct {
 	noradID    int
 	satName    string
@@ -39,8 +41,9 @@ type SatDumpDecoder struct {
 
 	mu          sync.Mutex
 	cmd         *exec.Cmd
+	tcpCmd      *exec.Cmd // rtl_tcp process
 	running     bool
-	done        chan struct{} // closed when process exits
+	done        chan struct{} // closed when satdump process exits
 	cancel      context.CancelFunc
 	peakSNR     float64
 	totalFrames int
@@ -75,27 +78,49 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
-	// Build SatDump command.
-	// Use a generous timeout (20 min) as safety net; scheduler calls Stop() at LOS.
+	childCtx, cancel := context.WithCancel(ctx)
+	d.cancel = cancel
+
+	// Use rtl_tcp as an intermediary to work around RTL-SDR Blog V4 bug
+	// where SatDump's direct RTL-SDR source fails to apply gain/bias settings.
+	// rtl_tcp handles hardware init correctly; SatDump connects as a TCP client.
+	tcpPort := "7654"
+	serial := handle.SerialNumber()
+	if serial == "" {
+		serial = "0"
+	}
+	tcpArgs := []string{
+		"-d", serial,
+		"-f", strconv.FormatInt(freqHz, 10),
+		"-g", "40",
+		"-s", strconv.Itoa(d.pipeline.SampleRate),
+		"-p", tcpPort,
+	}
+	d.tcpCmd = exec.CommandContext(childCtx, "rtl_tcp", tcpArgs...)
+	d.tcpCmd.Stdout = nil
+	d.tcpCmd.Stderr = nil
+
+	log.Printf("[satdump] starting rtl_tcp: %v", tcpArgs)
+	if err := d.tcpCmd.Start(); err != nil {
+		cancel()
+		return fmt.Errorf("start rtl_tcp: %w", err)
+	}
+
+	// Give rtl_tcp time to initialize the hardware and bind the port.
+	time.Sleep(2 * time.Second)
+
+	// Build SatDump command connecting via rtl_tcp.
 	args := []string{
 		"live",
 		d.pipeline.PipelineID,
 		d.outputDir,
-		"--source", "rtlsdr",
+		"--source", "rtltcp",
+		"--ip_address", "127.0.0.1",
+		"--port", tcpPort,
 		"--samplerate", strconv.Itoa(d.pipeline.SampleRate),
 		"--frequency", strconv.FormatInt(freqHz, 10),
-		"--gain", "40",
 		"--timeout", "1200",
 	}
-
-	// Select the specific RTL-SDR device by serial number so we don't
-	// collide with readsb on the ADS-B dongle.
-	if serial := handle.SerialNumber(); serial != "" {
-		args = append(args, "--source_id", serial)
-	}
-
-	childCtx, cancel := context.WithCancel(ctx)
-	d.cancel = cancel
 
 	d.cmd = exec.CommandContext(childCtx, d.satdumpBin, args...)
 	d.cmd.Stdout = nil // Discard stdout; SatDump writes to files.
@@ -104,6 +129,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	stderr, err := d.cmd.StderrPipe()
 	if err != nil {
 		cancel()
+		d.tcpCmd.Process.Kill()
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
@@ -111,6 +137,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 
 	if err := d.cmd.Start(); err != nil {
 		cancel()
+		d.tcpCmd.Process.Kill()
 		return fmt.Errorf("start satdump: %w", err)
 	}
 
@@ -236,6 +263,13 @@ func (d *SatDumpDecoder) Stop() error {
 	snr := d.peakSNR
 	frames := d.totalFrames
 	d.mu.Unlock()
+
+	// Kill rtl_tcp after satdump has exited.
+	if d.tcpCmd != nil && d.tcpCmd.Process != nil {
+		d.tcpCmd.Process.Kill()
+		d.tcpCmd.Wait()
+		d.tcpCmd = nil
+	}
 
 	log.Printf("[satdump] %s stats: peakSNR=%.1f dB, frames=%d", d.satName, snr, frames)
 	return nil

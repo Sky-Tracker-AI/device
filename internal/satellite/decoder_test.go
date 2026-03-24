@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/skytracker/skytracker-device/internal/sdr"
 )
@@ -35,8 +34,25 @@ func TestSatDumpDecoderOutputDir(t *testing.T) {
 }
 
 func TestSatDumpDecoderWithMockBinary(t *testing.T) {
-	// Create a mock "satdump" script that creates an output file and exits.
 	tmpDir := t.TempDir()
+
+	// Create a mock "rtl_tcp" that listens on the requested port and waits.
+	mockTCP := filepath.Join(tmpDir, "rtl_tcp")
+	tcpScript := `#!/bin/sh
+# Mock rtl_tcp: parse -p flag for port, listen with nc, then wait.
+PORT=7654
+while [ $# -gt 0 ]; do
+  case "$1" in -p) PORT="$2"; shift;; esac
+  shift
+done
+# Use a simple sleep — nc may not be available in all test environments.
+sleep 60
+`
+	if err := os.WriteFile(mockTCP, []byte(tcpScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a mock "satdump" script that creates an output file and exits.
 	mockBin := filepath.Join(tmpDir, "satdump")
 	script := `#!/bin/sh
 # Mock SatDump: create output directory structure and wait.
@@ -47,6 +63,9 @@ sleep 30
 	if err := os.WriteFile(mockBin, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
+
+	// Put mock binaries on PATH so the decoder finds rtl_tcp.
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	outputBase := filepath.Join(tmpDir, "output")
 	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", mockBin, outputBase)
@@ -70,9 +89,6 @@ sleep 30
 	if _, err := os.Stat(outDir); os.IsNotExist(err) {
 		t.Errorf("output directory %s does not exist", outDir)
 	}
-
-	// Give the mock script a moment to create files.
-	time.Sleep(100 * time.Millisecond)
 
 	// Stop the decoder.
 	if err := d.Stop(); err != nil {
