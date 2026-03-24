@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -88,13 +89,16 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		"--timeout", "1200",
 	}
 
-	// Add SDR serial if available.
-	if serial := handle.SerialNumber(); serial != "" {
-		args = append(args, "--sdr_serial", serial)
-	}
-
 	childCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel
+
+	// SatDump v1.2.2 always opens RTL-SDR device index 0 and ignores --source_id.
+	// If another process (readsb) holds a device, SatDump fails with usb_claim_interface.
+	// Workaround: temporarily stop readsb so SatDump can claim our device.
+	readsbStopped := stopReadsbIfRunning()
+	if readsbStopped {
+		log.Printf("[satdump] stopped readsb to free RTL-SDR")
+	}
 
 	d.cmd = exec.CommandContext(childCtx, d.satdumpBin, args...)
 	d.cmd.Stdout = nil // Discard stdout; SatDump writes to files.
@@ -103,6 +107,9 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	stderr, err := d.cmd.StderrPipe()
 	if err != nil {
 		cancel()
+		if readsbStopped {
+			startReadsb()
+		}
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
@@ -110,7 +117,18 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 
 	if err := d.cmd.Start(); err != nil {
 		cancel()
+		if readsbStopped {
+			startReadsb()
+		}
 		return fmt.Errorf("start satdump: %w", err)
+	}
+
+	// Restart readsb now that SatDump has claimed its device.
+	if readsbStopped {
+		// Give SatDump a moment to claim the USB device.
+		time.Sleep(2 * time.Second)
+		startReadsb()
+		log.Printf("[satdump] restarted readsb")
 	}
 
 	d.running = true
@@ -188,6 +206,21 @@ func (d *SatDumpDecoder) parseStderr(r io.Reader) {
 			d.mu.Unlock()
 		}
 	}
+}
+
+// stopReadsbIfRunning stops readsb if it's active, returning true if it was stopped.
+func stopReadsbIfRunning() bool {
+	out, err := exec.Command("systemctl", "is-active", "readsb").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "active" {
+		return false
+	}
+	exec.Command("systemctl", "stop", "readsb").Run()
+	return true
+}
+
+// startReadsb starts the readsb service.
+func startReadsb() {
+	exec.Command("systemctl", "start", "readsb").Run()
 }
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
