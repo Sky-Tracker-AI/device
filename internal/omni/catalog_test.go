@@ -25,19 +25,19 @@ func TestBuildCatalogIndex(t *testing.T) {
 		t.Error("ISS should be decodable")
 	}
 
-	// NOAA 19 should be decodable weather.
-	noaa19, ok := idx[33591]
+	// METEOR-M N2-3 should be decodable weather.
+	meteor, ok := idx[57166]
 	if !ok {
-		t.Fatal("NOAA 19 (33591) not found in index")
+		t.Fatal("METEOR-M N2-3 (57166) not found in index")
 	}
-	if noaa19.Category != CatWeather {
-		t.Errorf("NOAA 19 category = %q, want %q", noaa19.Category, CatWeather)
+	if meteor.Category != CatWeather {
+		t.Errorf("METEOR-M N2-3 category = %q, want %q", meteor.Category, CatWeather)
 	}
-	if !noaa19.Decodable {
-		t.Error("NOAA 19 should be decodable")
+	if !meteor.Decodable {
+		t.Error("METEOR-M N2-3 should be decodable")
 	}
-	if len(noaa19.Frequencies) == 0 {
-		t.Error("NOAA 19 should have frequencies")
+	if len(meteor.Frequencies) == 0 {
+		t.Error("METEOR-M N2-3 should have frequencies")
 	}
 }
 

@@ -43,10 +43,10 @@ func TestReporterReportPass(t *testing.T) {
 
 	task := &scheduler.Task{
 		ID:           "task-1",
-		NoradID:      33591,
-		SatName:      "NOAA 19",
+		NoradID:      57166,
+		SatName:      "METEOR-M N2-3",
 		Priority:     scheduler.PriorityHigh,
-		FreqHz:       137100000,
+		FreqHz:       137900000,
 		AOS:          time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
 		LOS:          time.Date(2024, 3, 1, 12, 15, 0, 0, time.UTC),
 		MaxElevation: 45.2,
@@ -73,11 +73,11 @@ func TestReporterReportPass(t *testing.T) {
 	if !ok {
 		t.Fatal("satellite field missing or wrong type")
 	}
-	if int(sat["norad_id"].(float64)) != 33591 {
-		t.Errorf("norad_id = %v, want 33591", sat["norad_id"])
+	if int(sat["norad_id"].(float64)) != 57166 {
+		t.Errorf("norad_id = %v, want 57166", sat["norad_id"])
 	}
-	if sat["sat_name"] != "NOAA 19" {
-		t.Errorf("sat_name = %v, want NOAA 19", sat["sat_name"])
+	if sat["sat_name"] != "METEOR-M N2-3" {
+		t.Errorf("sat_name = %v, want METEOR-M N2-3", sat["sat_name"])
 	}
 	if sat["has_imagery"] != true {
 		t.Errorf("has_imagery = %v, want true", sat["has_imagery"])
@@ -111,10 +111,10 @@ func TestReporterReportPassNoImages(t *testing.T) {
 
 	task := &scheduler.Task{
 		ID:           "task-1",
-		NoradID:      25338,
-		SatName:      "NOAA 15",
+		NoradID:      59051,
+		SatName:      "METEOR-M N2-4",
 		Priority:     scheduler.PriorityHigh,
-		FreqHz:       137620000,
+		FreqHz:       137900000,
 		AOS:          time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
 		LOS:          time.Date(2024, 3, 1, 12, 10, 0, 0, time.UTC),
 		MaxElevation: 30.0,
@@ -145,9 +145,9 @@ func TestReporterPlatformError(t *testing.T) {
 
 	task := &scheduler.Task{
 		ID:      "task-1",
-		NoradID: 25338,
-		SatName: "NOAA 15",
-		FreqHz:  137620000,
+		NoradID: 59051,
+		SatName: "METEOR-M N2-4",
+		FreqHz:  137900000,
 		AOS:     time.Now().Add(-10 * time.Minute),
 		LOS:     time.Now(),
 		SDR:     &sdr.MockSDRHandle{MockID: "sdr-0", MockSerial: "SKT-0", MockTuner: "R820T"},

@@ -9,16 +9,17 @@ func TestGetPipeline(t *testing.T) {
 		wantNil    bool
 		pipelineID string
 		protocol   string
-		satNumber  int
 	}{
-		{"NOAA 15", 25338, false, "noaa_apt", "APT", 15},
-		{"NOAA 18", 28654, false, "noaa_apt", "APT", 18},
-		{"NOAA 19", 33591, false, "noaa_apt", "APT", 19},
-		{"METEOR-M N2-3", 57166, false, "meteor_m2-x_lrpt", "LRPT", 0},
-		{"METEOR-M N2-2", 44387, false, "meteor_m2-x_lrpt", "LRPT", 0},
-		{"METEOR-M N2", 40069, false, "meteor_m2-x_lrpt", "LRPT", 0},
-		{"unknown satellite", 99999, true, "", "", 0},
-		{"ISS (no pipeline)", 25544, true, "", "", 0},
+		{"METEOR-M N2-3", 57166, false, "meteor_m2-x_lrpt", "LRPT"},
+		{"METEOR-M N2-4", 59051, false, "meteor_m2-x_lrpt", "LRPT"},
+		// Decommissioned — should have no pipeline
+		{"NOAA 15 (decommissioned)", 25338, true, "", ""},
+		{"NOAA 18 (decommissioned)", 28654, true, "", ""},
+		{"NOAA 19 (decommissioned)", 33591, true, "", ""},
+		{"METEOR-M N2 (dead)", 40069, true, "", ""},
+		{"METEOR-M N2-2 (LRPT failed)", 44387, true, "", ""},
+		{"unknown satellite", 99999, true, "", ""},
+		{"ISS (no pipeline)", 25544, true, "", ""},
 	}
 
 	for _, tt := range tests {
@@ -38,9 +39,6 @@ func TestGetPipeline(t *testing.T) {
 			}
 			if cfg.Protocol != tt.protocol {
 				t.Errorf("Protocol = %q, want %q", cfg.Protocol, tt.protocol)
-			}
-			if cfg.SatNumber != tt.satNumber {
-				t.Errorf("SatNumber = %d, want %d", cfg.SatNumber, tt.satNumber)
 			}
 			if cfg.SampleRate != 1024000 {
 				t.Errorf("SampleRate = %d, want 1024000", cfg.SampleRate)

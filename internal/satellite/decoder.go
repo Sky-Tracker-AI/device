@@ -84,15 +84,19 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		"--source", "rtlsdr",
 		"--samplerate", strconv.Itoa(d.pipeline.SampleRate),
 		"--frequency", strconv.FormatInt(freqHz, 10),
-		"--gain", "49.6",
+		"--gain", "auto",
 		"--timeout", "1200",
+	}
+
+	// Select the specific RTL-SDR device by serial number so we don't
+	// collide with readsb on the ADS-B dongle.
+	if serial := handle.SerialNumber(); serial != "" {
+		args = append(args, "--source_id", serial)
 	}
 
 	childCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel
 
-	// SatDump v1.2.2 tries RTL-SDR device index 0 first, falls back to index 1.
-	// readsb must hold device index 0 so SatDump uses the free device at index 1.
 	d.cmd = exec.CommandContext(childCtx, d.satdumpBin, args...)
 	d.cmd.Stdout = nil // Discard stdout; SatDump writes to files.
 

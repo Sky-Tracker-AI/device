@@ -12,9 +12,9 @@ import (
 )
 
 func TestSatDumpDecoderName(t *testing.T) {
-	d := NewSatDumpDecoder(25338, "NOAA 15", "satdump", t.TempDir())
-	if d.Name() != "NOAA 15" {
-		t.Errorf("Name() = %q, want NOAA 15", d.Name())
+	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", "satdump", t.TempDir())
+	if d.Name() != "METEOR-M N2-3" {
+		t.Errorf("Name() = %q, want METEOR-M N2-3", d.Name())
 	}
 }
 
@@ -28,7 +28,7 @@ func TestSatDumpDecoderNoPipeline(t *testing.T) {
 }
 
 func TestSatDumpDecoderOutputDir(t *testing.T) {
-	d := NewSatDumpDecoder(25338, "NOAA 15", "satdump", t.TempDir())
+	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", "satdump", t.TempDir())
 	if d.OutputDir() != "" {
 		t.Errorf("OutputDir() before Start = %q, want empty", d.OutputDir())
 	}
@@ -49,10 +49,10 @@ sleep 30
 	}
 
 	outputBase := filepath.Join(tmpDir, "output")
-	d := NewSatDumpDecoder(25338, "NOAA 15", mockBin, outputBase)
+	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", mockBin, outputBase)
 	handle := &sdr.MockSDRHandle{MockID: "sdr-0", MockSerial: "SKT-0", MockTuner: "R820T"}
 
-	err := d.Start(context.Background(), handle, 137620000)
+	err := d.Start(context.Background(), handle, 137900000)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -85,7 +85,7 @@ sleep 30
 }
 
 func TestParseStderrMeteorLRPT(t *testing.T) {
-	d := NewSatDumpDecoder(44387, "METEOR-M N2-2", "satdump", t.TempDir())
+	d := NewSatDumpDecoder(59051, "METEOR-M N2-4", "satdump", t.TempDir())
 
 	// Simulate real SatDump LRPT stderr output (with ANSI codes).
 	input := strings.Join([]string{
@@ -110,7 +110,7 @@ func TestParseStderrMeteorLRPT(t *testing.T) {
 }
 
 func TestParseStderrWithExplicitFrameCount(t *testing.T) {
-	d := NewSatDumpDecoder(25338, "NOAA 15", "satdump", t.TempDir())
+	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", "satdump", t.TempDir())
 
 	input := strings.Join([]string{
 		"(I) Progress 50%, SNR : 10.5dB, Peak SNR: 15.2dB",
@@ -138,7 +138,7 @@ func TestStripANSI(t *testing.T) {
 }
 
 func TestSatDumpDecoderStopWhenNotRunning(t *testing.T) {
-	d := NewSatDumpDecoder(25338, "NOAA 15", "satdump", t.TempDir())
+	d := NewSatDumpDecoder(57166, "METEOR-M N2-3", "satdump", t.TempDir())
 	// Stop should be safe when not running.
 	if err := d.Stop(); err != nil {
 		t.Fatalf("Stop on non-running decoder: %v", err)

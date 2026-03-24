@@ -30,13 +30,15 @@ var DefaultCatalog = []CatalogEntry{
 	{NoradID: 25544, Name: "ISS (ZARYA)", Category: CatSpaceStation, Frequencies: []float64{145.8, 437.8}, Decodable: true, IconSize: "large"},
 	{NoradID: 48274, Name: "TIANGONG (CSS)", Category: CatSpaceStation, Frequencies: []float64{145.825}, Decodable: false, IconSize: "large"},
 
-	// -- Weather Satellites (APT/LRPT decodable) --
-	{NoradID: 25338, Name: "NOAA 15", Category: CatWeather, Frequencies: []float64{137.62}, Decodable: true, IconSize: "large"},
-	{NoradID: 28654, Name: "NOAA 18", Category: CatWeather, Frequencies: []float64{137.9125}, Decodable: true, IconSize: "large"},
-	{NoradID: 33591, Name: "NOAA 19", Category: CatWeather, Frequencies: []float64{137.1}, Decodable: true, IconSize: "large"},
+	// -- Weather Satellites (LRPT decodable on 137 MHz) --
+	// Only METEOR-M N2-3 and N2-4 remain active on 137 MHz as of 2025.
+	// NOAA 15/18/19 APT decommissioned Jun-Aug 2025. METEOR-M N2 dead Dec 2022. N2-2 LRPT failed.
 	{NoradID: 57166, Name: "METEOR-M N2-3", Category: CatWeather, Frequencies: []float64{137.9}, Decodable: true, IconSize: "large"},
-	{NoradID: 44387, Name: "METEOR-M N2-2", Category: CatWeather, Frequencies: []float64{137.1, 137.9}, Decodable: true, IconSize: "large"},
-	{NoradID: 40069, Name: "METEOR-M N2", Category: CatWeather, Frequencies: []float64{137.1, 137.9}, Decodable: true, IconSize: "large"},
+	{NoradID: 59051, Name: "METEOR-M N2-4", Category: CatWeather, Frequencies: []float64{137.9}, Decodable: true, IconSize: "large"},
+	// Decommissioned — tracked for visibility only
+	{NoradID: 25338, Name: "NOAA 15", Category: CatWeather, Frequencies: []float64{137.62}, Decodable: false, IconSize: "medium"},
+	{NoradID: 28654, Name: "NOAA 18", Category: CatWeather, Frequencies: []float64{137.9125}, Decodable: false, IconSize: "medium"},
+	{NoradID: 33591, Name: "NOAA 19", Category: CatWeather, Frequencies: []float64{137.1}, Decodable: false, IconSize: "medium"},
 	{NoradID: 43013, Name: "NOAA 20 (JPSS-1)", Category: CatWeather, Frequencies: []float64{}, Decodable: false, IconSize: "medium"},
 	{NoradID: 54234, Name: "NOAA 21 (JPSS-2)", Category: CatWeather, Frequencies: []float64{}, Decodable: false, IconSize: "medium"},
 	{NoradID: 25994, Name: "TERRA", Category: CatWeather, Frequencies: []float64{}, Decodable: false, IconSize: "medium"},
