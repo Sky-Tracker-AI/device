@@ -93,3 +93,9 @@ ble:
 #
 #   # Enable SDR scheduler — assigns decoders to SDRs during satellite passes
 #   scheduler_enabled: true
+#
+#   # Path to the SatDump binary (default: "satdump", found via PATH)
+#   satdump_bin: "satdump"
+#
+#   # Output directory for decoded satellite images (tmpfs recommended)
+#   decoder_output_dir: "/tmp/skytracker-sat"

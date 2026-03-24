@@ -52,6 +52,12 @@ func NewService(minElevDeg float64, refreshHours int) *Service {
 func (s *Service) Start(ctx context.Context) {
 	log.Printf("[sat] starting service: %d satellites in catalog, min elevation %.1f deg", len(s.catalog), s.minElev)
 
+	// Re-predict passes whenever TLEs are refreshed.
+	s.fetcher.onRefresh = func() {
+		log.Printf("[sat] TLEs refreshed, re-predicting passes")
+		s.refreshPasses()
+	}
+
 	// Start the fetcher in its own goroutine.
 	fetchDone := make(chan struct{})
 	go func() {

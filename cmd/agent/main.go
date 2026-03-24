@@ -26,6 +26,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/queue"
 	"github.com/skytracker/skytracker-device/internal/routes"
 	"github.com/skytracker/skytracker-device/internal/sat"
+	"github.com/skytracker/skytracker-device/internal/satellite"
 	"github.com/skytracker/skytracker-device/internal/scheduler"
 	"github.com/skytracker/skytracker-device/internal/sdr"
 	"github.com/skytracker/skytracker-device/internal/server"
@@ -34,7 +35,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func main() {
 	var (
@@ -387,6 +388,25 @@ func main() {
 	var sched *scheduler.Scheduler
 	var omniSDRs []sdr.SDRDevice
 
+	// Build decoder factory: SatDump if available, NoopDecoder otherwise.
+	var decoderFn func(noradID int, satName string) scheduler.Decoder
+	satdumpBin, satdumpErr := exec.LookPath(cfg.Omni.SatDumpBin)
+	if satdumpErr != nil {
+		log.Printf("[omni] satdump not found, using noop decoders")
+		decoderFn = func(noradID int, satName string) scheduler.Decoder {
+			return scheduler.NewNoopDecoder(satName)
+		}
+	} else {
+		log.Printf("[omni] satdump found: %s", satdumpBin)
+		outputDir := cfg.Omni.DecoderOutputDir
+		decoderFn = func(noradID int, satName string) scheduler.Decoder {
+			if satellite.GetPipeline(noradID) == nil {
+				return scheduler.NewNoopDecoder(satName)
+			}
+			return satellite.NewSatDumpDecoder(noradID, satName, satdumpBin, outputDir)
+		}
+	}
+
 	if cfg.Omni.Enabled {
 		// Detect SDR hardware.
 		if *mockMode {
@@ -409,7 +429,7 @@ func main() {
 
 			// Start scheduler with mock SDRs.
 			if cfg.Omni.SchedulerEnabled {
-				sched = scheduler.NewScheduler(mockHandles, satService, nil)
+				sched = scheduler.NewScheduler(mockHandles, satService, decoderFn)
 				go sched.Run(ctx)
 				log.Printf("[omni] scheduler started with %d mock SDR(s)", len(mockHandles))
 			}
@@ -453,10 +473,19 @@ func main() {
 				for i := range omniSDRs {
 					handles[i] = sdr.NewHandle(omniSDRs[i])
 				}
-				sched = scheduler.NewScheduler(handles, satService, nil)
+				sched = scheduler.NewScheduler(handles, satService, decoderFn)
 				go sched.Run(ctx)
 				log.Printf("[omni] scheduler started with %d SDR(s)", len(handles))
 			}
+		}
+
+		// Wire up post-pass reporter.
+		if sched != nil && !*mockMode {
+			reporter := satellite.NewReporter(platHolder.Get, agentState.GetStationID())
+			sched.SetOnComplete(func(task *scheduler.Task, outputDir string) {
+				reporter.ReportPass(ctx, task, outputDir)
+			})
+			log.Printf("[omni] post-pass reporter enabled")
 		}
 	} else {
 		omniMode = sdr.ModeNone

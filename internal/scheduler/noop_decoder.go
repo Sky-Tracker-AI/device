@@ -61,3 +61,7 @@ func (d *NoopDecoder) IsRunning() bool {
 	defer d.mu.Unlock()
 	return d.running
 }
+
+func (d *NoopDecoder) OutputDir() string      { return "" }
+func (d *NoopDecoder) SignalStrength() float64 { return 0 }
+func (d *NoopDecoder) FramesDecoded() int      { return 0 }

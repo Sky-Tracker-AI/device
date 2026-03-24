@@ -26,12 +26,15 @@ const (
 	TaskFailed    TaskState = "failed"
 )
 
-// Decoder is the interface for signal decoders. Phase 1 uses NoopDecoder.
+// Decoder is the interface for signal decoders.
 type Decoder interface {
 	Name() string
 	Start(ctx context.Context, sdr sdr.SDRHandle, freqHz int64) error
 	Stop() error
 	IsRunning() bool
+	OutputDir() string      // Path to decoder output directory (empty for NoopDecoder).
+	SignalStrength() float64 // Peak SNR in dB observed during the pass.
+	FramesDecoded() int      // Total frames/CADUs decoded during the pass.
 }
 
 // Task represents a scheduled decoder task for a satellite pass.

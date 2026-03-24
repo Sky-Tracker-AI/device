@@ -95,7 +95,6 @@ func DetectReadsbSerial() (serial string, active bool) {
 	// Parse /etc/default/readsb for --device flag.
 	data, err := os.ReadFile("/etc/default/readsb")
 	if err != nil {
-		// readsb is active but we can't determine which device — assume index 0.
 		return "0", true
 	}
 
@@ -104,11 +103,9 @@ func DetectReadsbSerial() (serial string, active bool) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Look for --device or --device-serial in RECEIVER_OPTIONS or similar.
 		if idx := strings.Index(line, "--device"); idx >= 0 {
 			parts := strings.Fields(line[idx:])
 			if len(parts) >= 2 {
-				// Handle both --device 00001 and --device=00001
 				val := parts[1]
 				if strings.Contains(parts[0], "=") {
 					val = strings.SplitN(parts[0], "=", 2)[1]
@@ -189,3 +186,4 @@ func ProgramSerials(devices []SDRDevice) int {
 	}
 	return programmed
 }
+

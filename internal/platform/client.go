@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -232,6 +233,195 @@ func (c *Client) Health(ctx context.Context, req HealthRequest) (*HealthResponse
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return &result, nil
+}
+
+// SatelliteObservation matches platform models.SatelliteObservation.
+type SatelliteObservation struct {
+	NoradID        int     `json:"norad_id"`
+	SatName        string  `json:"sat_name"`
+	SatCategory    string  `json:"sat_category,omitempty"`
+	Frequency      float64 `json:"frequency"`
+	Protocol       string  `json:"protocol,omitempty"`
+	AOS            int64   `json:"aos"`
+	LOS            int64   `json:"los"`
+	MaxElevation   float64 `json:"max_elevation"`
+	SignalStrength float64 `json:"signal_strength,omitempty"`
+	FramesDecoded  int     `json:"frames_decoded,omitempty"`
+	HasImagery     bool    `json:"has_imagery,omitempty"`
+}
+
+// WeatherImageUpload matches platform models.WeatherImageUpload.
+type WeatherImageUpload struct {
+	NoradID       int      `json:"norad_id"`
+	SatName       string   `json:"sat_name"`
+	Channels      []string `json:"channels,omitempty"`
+	ResolutionKm  float64  `json:"resolution_km,omitempty"`
+	ImageWidth    int      `json:"image_width,omitempty"`
+	ImageHeight   int      `json:"image_height,omitempty"`
+	FileSizeBytes int      `json:"file_size_bytes"`
+	CapturedAt    int64    `json:"captured_at"`
+}
+
+// satelliteIngestRequest wraps a satellite observation for the ingest endpoint.
+type satelliteIngestRequest struct {
+	SourceType string               `json:"source_type"`
+	Satellite  *SatelliteObservation `json:"satellite"`
+}
+
+// weatherImageIngestRequest wraps a weather image upload for the ingest endpoint.
+type weatherImageIngestRequest struct {
+	SourceType   string              `json:"source_type"`
+	WeatherImage *WeatherImageUpload `json:"weather_image"`
+}
+
+// weatherImageIngestResponse holds the platform response for weather image ingest.
+type weatherImageIngestResponse struct {
+	Accepted  int    `json:"accepted"`
+	ImageID   string `json:"image_id,omitempty"`
+	UploadURL string `json:"upload_url,omitempty"`
+}
+
+// IngestSatellite reports a decoded satellite pass.
+func (c *Client) IngestSatellite(ctx context.Context, obs SatelliteObservation) error {
+	if !c.IsConfigured() {
+		return fmt.Errorf("not configured (no API key)")
+	}
+
+	req := satelliteIngestRequest{
+		SourceType: "satellite",
+		Satellite:  &obs,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("ingest satellite: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// IngestWeatherImage reports decoded weather imagery metadata.
+// Returns the image ID and a presigned upload URL if the platform provides one.
+func (c *Client) IngestWeatherImage(ctx context.Context, img WeatherImageUpload) (imageID, uploadURL string, err error) {
+	if !c.IsConfigured() {
+		return "", "", fmt.Errorf("not configured (no API key)")
+	}
+
+	req := weatherImageIngestRequest{
+		SourceType:   "weather_image",
+		WeatherImage: &img,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return "", "", fmt.Errorf("new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", "", fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", "", fmt.Errorf("ingest weather image: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result weatherImageIngestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", fmt.Errorf("decode: %w", err)
+	}
+	return result.ImageID, result.UploadURL, nil
+}
+
+// UploadToPresignedURL PUTs a file to a presigned R2 URL.
+func (c *Client) UploadToPresignedURL(ctx context.Context, url string, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", url, f)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	httpReq.ContentLength = stat.Size()
+	httpReq.Header.Set("Content-Type", "image/png")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("upload: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ConfirmWeatherImageUpload tells the platform that the image upload to R2 is complete.
+func (c *Client) ConfirmWeatherImageUpload(ctx context.Context, imageID string) error {
+	if !c.IsConfigured() {
+		return fmt.Errorf("not configured (no API key)")
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"source_type": "weather_image_confirm",
+		"image_id":    imageID,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("confirm weather image: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // LogConnectivity logs the platform connection status (for debugging).

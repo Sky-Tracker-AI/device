@@ -26,6 +26,7 @@ type Fetcher struct {
 	client    *http.Client
 	cachePath string
 	refreshH  int
+	onRefresh func() // called after successful TLE fetch
 }
 
 // NewFetcher creates a Fetcher that retains TLEs only for catalog satellites.
@@ -54,7 +55,7 @@ func (f *Fetcher) Start(ctx context.Context) {
 	}
 
 	// Only fetch immediately if cache is old or empty.
-	if cacheAge > 24*time.Hour || loaded == 0 {
+	if cacheAge > time.Duration(f.refreshH)*time.Hour || loaded == 0 {
 		if err := f.FetchAll(ctx); err != nil {
 			log.Printf("[sat] initial fetch error: %v", err)
 		}
@@ -72,6 +73,8 @@ func (f *Fetcher) Start(ctx context.Context) {
 		case <-ticker.C:
 			if err := f.FetchAll(ctx); err != nil {
 				log.Printf("[sat] refresh error: %v", err)
+			} else if f.onRefresh != nil {
+				f.onRefresh()
 			}
 		}
 	}

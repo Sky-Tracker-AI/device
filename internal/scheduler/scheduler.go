@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -27,16 +28,17 @@ type Scheduler struct {
 	tasks        []*Task
 	sdrTasks     map[string]*Task // SDR ID → active task
 	state        string           // "running", "stopped"
-	decoderFn    func(string) Decoder
+	decoderFn    func(noradID int, satName string) Decoder
+	onComplete   func(task *Task, outputDir string)
 	nextTaskID   int
 }
 
 // NewScheduler creates a scheduler with the given SDRs and pass provider.
-// decoderFn creates a Decoder for a given signal name; defaults to NoopDecoder.
-func NewScheduler(sdrs []sdr.SDRHandle, provider PassProvider, decoderFn func(string) Decoder) *Scheduler {
+// decoderFn creates a Decoder for a given satellite; defaults to NoopDecoder.
+func NewScheduler(sdrs []sdr.SDRHandle, provider PassProvider, decoderFn func(noradID int, satName string) Decoder) *Scheduler {
 	if decoderFn == nil {
-		decoderFn = func(name string) Decoder {
-			return NewNoopDecoder(name)
+		decoderFn = func(noradID int, satName string) Decoder {
+			return NewNoopDecoder(satName)
 		}
 	}
 	return &Scheduler{
@@ -47,6 +49,13 @@ func NewScheduler(sdrs []sdr.SDRHandle, provider PassProvider, decoderFn func(st
 		state:        "stopped",
 		decoderFn:    decoderFn,
 	}
+}
+
+// SetOnComplete sets a callback invoked after a task completes at LOS.
+func (s *Scheduler) SetOnComplete(fn func(task *Task, outputDir string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onComplete = fn
 }
 
 // SetClock sets a custom clock (for testing).
@@ -68,11 +77,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Do an initial tick immediately.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scheduler] PANIC in scheduler loop: %v", r)
+		}
+	}()
 	s.tick(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("[scheduler] context cancelled, stopping")
 			s.stop()
 			return
 		case <-ticker.C:
@@ -91,7 +106,15 @@ func (s *Scheduler) tick(ctx context.Context) {
 	// 2. Get upcoming decodable passes.
 	passes := s.passProvider.GetDecodablePasses()
 
-	// 3. For each pass starting within 60 seconds, try to assign an SDR.
+	// 3. For each pass within window, try to assign an SDR.
+	for _, pass := range passes {
+		if !pass.AOS.After(now.Add(60*time.Second)) && !pass.LOS.Before(now) {
+			if !s.hasTaskForPass(pass) {
+				log.Printf("[scheduler] eligible: %s AOS=%s LOS=%s maxEl=%.0f",
+					pass.Name, pass.AOS.Format("15:04:05"), pass.LOS.Format("15:04:05"), pass.MaxElevation)
+			}
+		}
+	}
 	for _, pass := range passes {
 		if pass.AOS.After(now.Add(60 * time.Second)) {
 			continue // Not starting soon enough.
@@ -149,8 +172,18 @@ func (s *Scheduler) completeFinishedTasks(now time.Time) {
 			}
 			task.State = TaskCompleted
 			task.CompletedAt = now
+			outputDir := ""
+			if task.Decoder != nil {
+				outputDir = task.Decoder.OutputDir()
+			}
 			delete(s.sdrTasks, task.SDR.ID())
 			log.Printf("[scheduler] completed: %s (%s) on SDR %s", task.SatName, task.ID, task.SDR.ID())
+
+			if s.onComplete != nil {
+				onComplete := s.onComplete
+				completedTask := task
+				go onComplete(completedTask, outputDir)
+			}
 		}
 	}
 }
@@ -216,6 +249,14 @@ func (s *Scheduler) preemptLowerPriority(ctx context.Context, newPriority Priori
 
 	if candidate.Decoder != nil {
 		candidate.Decoder.Stop()
+		// Clean up output directory for preempted tasks (reporter won't run).
+		if outputDir := candidate.Decoder.OutputDir(); outputDir != "" {
+			go func(dir string) {
+				if err := os.RemoveAll(dir); err != nil {
+					log.Printf("[scheduler] cleanup preempted output dir: %v", err)
+				}
+			}(outputDir)
+		}
 	}
 	candidate.State = TaskCompleted
 	candidate.CompletedAt = s.clock.Now()
@@ -242,7 +283,7 @@ func (s *Scheduler) createTask(pass sat.PassPrediction, priority Priority, freqH
 		MaxElevation: pass.MaxElevation,
 		State:        TaskPending,
 		SDR:          handle,
-		Decoder:      s.decoderFn(pass.Name),
+		Decoder:      s.decoderFn(pass.NoradID, pass.Name),
 	}
 	s.tasks = append(s.tasks, task)
 	return task

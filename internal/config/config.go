@@ -23,6 +23,8 @@ type OmniConfig struct {
 	MinElevation     float64 `yaml:"min_elevation"`
 	TLERefreshHrs    int     `yaml:"tle_refresh_hrs"`
 	SchedulerEnabled bool    `yaml:"scheduler_enabled"`
+	SatDumpBin       string  `yaml:"satdump_bin"`
+	DecoderOutputDir string  `yaml:"decoder_output_dir"`
 }
 
 type StationConfig struct {
@@ -108,6 +110,8 @@ func Default() *Config {
 			MinElevation:     5.0,
 			TLERefreshHrs:    12,
 			SchedulerEnabled: true,
+			SatDumpBin:       "satdump",
+			DecoderOutputDir: "/tmp/skytracker-sat",
 		},
 	}
 }
