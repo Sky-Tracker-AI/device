@@ -136,7 +136,7 @@ func (s *Service) refreshPasses() {
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	var allPasses []PassPrediction
 
 	for id, entry := range s.catalog {
@@ -162,6 +162,11 @@ func (s *Service) refreshPasses() {
 		if p.Decodable {
 			decodable++
 		}
+		// Debug: log weather satellite passes.
+		if p.Category == omni.CatWeather {
+			log.Printf("[sat] weather pass: %s (NORAD %d) AOS=%s LOS=%s maxEl=%.0f decodable=%v",
+				p.Name, p.NoradID, p.AOS.Format("15:04:05 MST"), p.LOS.Format("15:04:05 MST"), p.MaxElevation, p.Decodable)
+		}
 	}
 	log.Printf("[sat] predicted %d passes (%d decodable) in next 24h", len(allPasses), decodable)
 }
@@ -179,7 +184,7 @@ func (s *Service) GetUpcomingPasses() []PassPrediction {
 	defer s.mu.RUnlock()
 
 	// Filter out passes that have already ended.
-	now := time.Now()
+	now := time.Now().UTC()
 	var upcoming []PassPrediction
 	for _, p := range s.passes {
 		if p.LOS.After(now) {
