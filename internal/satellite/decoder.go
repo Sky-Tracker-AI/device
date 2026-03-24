@@ -123,14 +123,6 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		return fmt.Errorf("start satdump: %w", err)
 	}
 
-	// Restart readsb now that SatDump has claimed its device.
-	if readsbStopped {
-		// Give SatDump a moment to claim the USB device.
-		time.Sleep(2 * time.Second)
-		startReadsb()
-		log.Printf("[satdump] restarted readsb")
-	}
-
 	d.running = true
 	d.peakSNR = 0
 	d.totalFrames = 0
@@ -140,6 +132,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	go d.parseStderr(stderr)
 
 	// Watchdog: sole owner of cmd.Wait(). Signals completion via d.done.
+	// Restarts readsb after SatDump exits (if we stopped it).
 	go func() {
 		err := d.cmd.Wait()
 		d.mu.Lock()
@@ -149,6 +142,10 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 			log.Printf("[satdump] process exited: %v", err)
 		} else {
 			log.Printf("[satdump] process exited cleanly")
+		}
+		if readsbStopped {
+			startReadsb()
+			log.Printf("[satdump] restarted readsb")
 		}
 		close(d.done)
 	}()
