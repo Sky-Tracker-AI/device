@@ -96,6 +96,9 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		"-s", strconv.Itoa(d.pipeline.SampleRate),
 		"-p", tcpPort,
 	}
+	// Kill any stale rtl_tcp from a previous crash/restart before starting.
+	exec.Command("pkill", "-f", "rtl_tcp.*-p "+tcpPort).Run()
+
 	d.tcpCmd = exec.CommandContext(childCtx, "rtl_tcp", tcpArgs...)
 	d.tcpCmd.Stdout = nil
 	d.tcpCmd.Stderr = nil
