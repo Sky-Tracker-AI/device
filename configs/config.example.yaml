@@ -42,8 +42,7 @@ display:
 # ── Data sources ─────────────────────────────────────────────────────────────
 
 sources:
-  # URL where dump1090-fa serves aircraft data
-  # Default assumes dump1090-fa runs on the same device on port 8080
+  # URL where readsb/tar1090 serves aircraft JSON
   dump1090_url: "http://localhost/tar1090/data/aircraft.json"
 
   # gpsd connection (reads GPS position from USB dongle)
@@ -53,7 +52,7 @@ sources:
 # ── Advanced settings ────────────────────────────────────────────────────────
 
 advanced:
-  # How often to poll dump1090 for aircraft data (milliseconds)
+  # How often to poll readsb for aircraft data (milliseconds)
   poll_interval_ms: 1000
 
   # Maximum display range in nautical miles

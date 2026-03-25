@@ -103,7 +103,7 @@ detect_os() {
 # It also installs tar1090 (lighttpd) which serves aircraft.json on port 80.
 
 install_adsb_decoder() {
-    if command -v readsb &>/dev/null || command -v dump1090-fa &>/dev/null; then
+    if command -v readsb &>/dev/null; then
         success "ADS-B decoder already installed"
         return
     fi
@@ -311,7 +311,7 @@ create_service() {
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SVCEOF
 [Unit]
 Description=SkyTracker Agent
-After=network.target readsb.service dump1090-fa.service
+After=network.target readsb.service
 Wants=readsb.service
 
 [Service]

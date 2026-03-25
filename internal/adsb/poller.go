@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Poller polls a dump1090-fa endpoint at a configured interval and keeps
+// Poller polls a readsb endpoint at a configured interval and keeps
 // a snapshot of the latest aircraft data.
 type Poller struct {
 	url      string
@@ -24,7 +24,7 @@ type Poller struct {
 	lastPoll time.Time
 }
 
-// NewPoller creates a new dump1090-fa poller.
+// NewPoller creates a new readsb poller.
 func NewPoller(url string, intervalMS int) *Poller {
 	return &Poller{
 		url:      url,

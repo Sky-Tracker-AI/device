@@ -1,5 +1,5 @@
 // mock-dump1090 serves synthetic aircraft data on /data/aircraft.json,
-// mimicking the real dump1090-fa HTTP interface. Useful for development
+// mimicking the readsb/tar1090 HTTP interface. Useful for development
 // and testing without SDR hardware.
 //
 // Usage:
@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// Aircraft represents a single aircraft in the dump1090-fa JSON format.
+// Aircraft represents a single aircraft in the readsb JSON format.
 type Aircraft struct {
 	Hex      string  `json:"hex"`
 	Flight   string  `json:"flight,omitempty"`
@@ -38,7 +38,7 @@ type Aircraft struct {
 	NavQNH   float64 `json:"nav_qnh,omitempty"`
 }
 
-// Dump1090Response is the top-level response matching dump1090-fa output.
+// Dump1090Response is the top-level response matching readsb JSON output.
 type Dump1090Response struct {
 	Now      float64    `json:"now"`
 	Messages int        `json:"messages"`

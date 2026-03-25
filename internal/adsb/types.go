@@ -3,7 +3,7 @@ package adsb
 import "encoding/json"
 
 // FlexInt handles JSON fields that can be either a number or a string
-// (e.g. dump1090's alt_baro which is an int in flight but "ground" on surface).
+// (e.g. readsb's alt_baro which is an int in flight but "ground" on surface).
 // String values unmarshal as nil.
 type FlexInt struct {
 	Value *int
@@ -28,7 +28,7 @@ func (f FlexInt) MarshalJSON() ([]byte, error) {
 	return json.Marshal(*f.Value)
 }
 
-// Aircraft represents a single aircraft as reported by dump1090-fa.
+// Aircraft represents a single aircraft as reported by readsb.
 type Aircraft struct {
 	Hex         string   `json:"hex"`
 	Flight      string   `json:"flight,omitempty"`
@@ -48,7 +48,7 @@ type Aircraft struct {
 	Messages    int      `json:"messages,omitempty"`
 }
 
-// Dump1090Response is the top-level JSON response from dump1090-fa
+// Dump1090Response is the top-level JSON response from readsb
 // at /data/aircraft.json.
 type Dump1090Response struct {
 	Now      float64    `json:"now"`
@@ -99,7 +99,7 @@ func (a *Aircraft) HasPosition() bool {
 
 // Callsign returns the trimmed flight/callsign string.
 func (a *Aircraft) Callsign() string {
-	// dump1090 pads callsigns with spaces
+	// readsb pads callsigns with spaces
 	cs := a.Flight
 	for len(cs) > 0 && cs[len(cs)-1] == ' ' {
 		cs = cs[:len(cs)-1]
