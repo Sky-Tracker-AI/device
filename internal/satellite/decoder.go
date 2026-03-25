@@ -92,7 +92,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	tcpArgs := []string{
 		"-d", serial,
 		"-f", strconv.FormatInt(freqHz, 10),
-		"-g", "40",
+		"-g", "20",
 		"-s", strconv.Itoa(d.pipeline.SampleRate),
 		"-p", tcpPort,
 	}
