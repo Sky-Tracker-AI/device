@@ -5,7 +5,7 @@
 <h1 align="center">SkyTracker Device</h1>
 
 <p align="center">
-Open-source on-device software that turns any Linux single-board computer with an RTL-SDR receiver into a real-time ADS-B aircraft tracker with a live radar display. Part of the <a href="https://skytracker.ai">SkyTracker</a> platform.
+Open-source on-device software that turns any Linux single-board computer with RTL-SDR receivers into a real-time ADS-B aircraft tracker and weather satellite receiver. Part of the <a href="https://skytracker.ai">SkyTracker</a> platform.
 </p>
 
 ## Quick Start
@@ -16,7 +16,7 @@ Open-source on-device software that turns any Linux single-board computer with a
 curl -sSL https://get.skytracker.ai | sudo bash
 ```
 
-This installs readsb (with RTL-SDR support), GPS support, the SkyTracker agent, and starts everything as a systemd service. It also sets up a Chromium kiosk for the display and downloads the [tar1090-db](https://github.com/wiedehopf/tar1090-db) aircraft database. Your station location is auto-detected from IP. See [skytracker.ai/setup](https://skytracker.ai/setup) for the full guide.
+This installs readsb (with RTL-SDR support), SatDump, GPS support, the SkyTracker agent, and starts everything as a systemd service. It also sets up a Chromium kiosk for the display and downloads the [tar1090-db](https://github.com/wiedehopf/tar1090-db) aircraft database. Your station location is auto-detected from IP. See [skytracker.ai/setup](https://skytracker.ai/setup) for the full guide.
 
 ### Manual Install
 
@@ -68,16 +68,21 @@ The display UI is plain HTML, CSS, and JavaScript — no framework, no build ste
 device/
 ├── cmd/
 │   ├── agent/             # Main agent entrypoint
-│   └── mock-dump1090/     # Mock data generator for development
+│   └── mock-dump1090/     # Mock ADS-B data generator for development
 ├── internal/              # Agent internals
-│   ├── adsb/              # ADS-B polling (dump1090-fa)
+│   ├── adsb/              # ADS-B polling (readsb JSON)
 │   ├── config/            # YAML configuration
 │   ├── enrichment/        # Aircraft type + airline lookup (tar1090-db CSV)
 │   ├── geo/               # Haversine distance, bearing
 │   ├── gpsd/              # GPS daemon client
+│   ├── omni/              # Satellite catalog and categories
 │   ├── platform/          # skytracker.ai API client
 │   ├── queue/             # Offline sighting queue (SQLite)
 │   ├── routes/            # Flight route lookup (adsbdb.com)
+│   ├── sat/               # TLE fetcher, SGP4 pass predictor
+│   ├── satellite/         # SatDump decoder, pipeline config, post-pass reporter
+│   ├── scheduler/         # SDR time-sharing across satellite passes
+│   ├── sdr/               # RTL-SDR detection, serial programming, readsb interop
 │   ├── server/            # HTTP + WebSocket server
 │   ├── state/             # Persistent agent state
 │   ├── updater/           # OTA update from GitHub Releases
@@ -95,12 +100,13 @@ device/
 
 | Component | Example | Cost |
 |-----------|---------|------|
-| RTL-SDR Blog V4 + Antenna Kit | R828D tuner, dipole antenna | ~$40 |
+| RTL-SDR Blog V4 + Antenna Kit | R828D tuner, 1090 MHz antenna (ADS-B) | ~$40 |
+| RTL-SDR Blog V4 + V-Dipole | R828D tuner, V-dipole antenna (satellite) | ~$40 |
 | Raspberry Pi 4/5 (2GB+) | Any Linux SBC with USB | ~$75 |
 | 7" IPS Display (1024x600) | Optional — for radar display | ~$35 |
 | USB GPS Dongle | Optional — for auto-positioning | ~$18 |
 
-Any Linux SBC with USB works. Raspberry Pi is recommended but not required. A display is optional — the agent works headless and sends data to [skytracker.ai/map](https://skytracker.ai/map).
+A single RTL-SDR handles ADS-B. Add a second with a V-dipole for satellite reception. Any Linux SBC with USB works. A display is optional — the agent works headless and sends data to [skytracker.ai/map](https://skytracker.ai/map).
 
 ## Aircraft Data & Privacy
 
@@ -161,6 +167,8 @@ The agent auto-registers with skytracker.ai on first boot. No API key or manual 
 
 - **Enrichment** (`internal/enrichment/`) — loads tar1090-db CSV (619K aircraft), applies LADD/PIA suppression, auto-updates weekly from GitHub
 - **OTA updater** (`internal/updater/`) — checks GitHub Releases daily, stages updates with SHA256 verification, applies on restart
+- **Satellite scheduler** (`internal/scheduler/`) — time-shares idle SDRs across satellite passes with priority-based preemption
+- **SatDump decoder** (`internal/satellite/`) — launches rtl_tcp + SatDump to receive and decode METEOR-M LRPT weather imagery, reports observations to the platform
 
 ### Code of Conduct
 
