@@ -68,7 +68,7 @@ The display UI is plain HTML, CSS, and JavaScript — no framework, no build ste
 device/
 ├── cmd/
 │   ├── agent/             # Main agent entrypoint
-│   └── mock-dump1090/     # Mock ADS-B data generator for development
+│   └── mock-dump1090/     # Mock ADS-B JSON server for development
 ├── internal/              # Agent internals
 │   ├── adsb/              # ADS-B polling (readsb JSON)
 │   ├── config/            # YAML configuration
