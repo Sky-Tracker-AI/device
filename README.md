@@ -35,6 +35,40 @@ curl -L https://raw.githubusercontent.com/wiedehopf/tar1090-db/csv/aircraft.csv.
 skytracker-agent --config /etc/skytracker/config.yaml
 ```
 
+## Onboarding
+
+New devices are onboarded via BLE from the SkyTracker iOS app.
+
+### How it works
+
+1. **Power on** — the device boots and starts advertising via BLE as `SkyTracker-XXXXXX`
+2. **Connect** — the app discovers the device and connects over Bluetooth
+3. **WiFi** — the app scans for nearby networks, the user picks one and enters the password. The app sends the credentials over BLE and the device connects.
+4. **Registration** — the device auto-registers with the SkyTracker platform (no API key or manual config needed)
+5. **Claim** — the app reads a claim code from the device and submits it to the platform. The user's account is linked to the station.
+
+After onboarding, the device runs autonomously — syncing aircraft data, satellite observations, and health reports to the platform.
+
+### What gets auto-detected
+
+The device figures out its capabilities from hardware at startup. No manual signal type selection is needed during onboarding.
+
+| Capability | How it's detected | Config needed? |
+|---|---|---|
+| **ADS-B** | readsb systemd service is running, claims one SDR | No — pre-configured at OS image level |
+| **Weather satellites** | Remaining SDRs after readsb + ACARS get the scheduler | No — runs automatically if SDRs are available |
+| **Inmarsat ACARS** | `omni.acars.enabled: true` in config.yaml | **Yes — manual config today** |
+
+The device reports its active signal types (e.g. `["adsb", "satellite", "acars"]`) to the platform via health reports. The platform uses this to show the correct tabs and capabilities on the station profile.
+
+### What's not in onboarding yet
+
+- **L-band mode selection** — choosing between Inmarsat ACARS and Iridium during setup. Currently requires editing `config.yaml`.
+- **Satellite target selection** — choosing which Inmarsat satellite to point at. Currently defaults to Inmarsat-4 F3 (Americas) via config.
+- **SDR role assignment** — the device allocates SDRs automatically by convention. There's no UI to reassign them.
+
+These will be added as a BLE characteristic in a future release so the iOS app can configure signal types during onboarding.
+
 ## Development
 
 No SBC or SDR hardware required. The agent includes a mock mode with synthetic aircraft data.
