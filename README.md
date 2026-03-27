@@ -70,6 +70,7 @@ device/
 │   ├── agent/             # Main agent entrypoint
 │   └── mock-dump1090/     # Mock ADS-B JSON server for development
 ├── internal/              # Agent internals
+│   ├── acars/             # Inmarsat L-band ACARS decoder, parser, AES lookup
 │   ├── adsb/              # ADS-B polling (readsb JSON)
 │   ├── config/            # YAML configuration
 │   ├── enrichment/        # Aircraft type + airline lookup (tar1090-db CSV)
@@ -98,15 +99,103 @@ device/
 
 ## Hardware
 
+### Core
+
 | Component | Example | Cost |
 |-----------|---------|------|
+| Raspberry Pi 4 or 5 (2GB+) | Any Linux SBC with USB | ~$45–75 |
 | RTL-SDR Blog V4 + Antenna Kit | R828D tuner, 1090 MHz antenna (ADS-B) | ~$40 |
-| RTL-SDR Blog V4 + V-Dipole | R828D tuner, V-dipole antenna (satellite) | ~$40 |
-| Raspberry Pi 4/5 (2GB+) | Any Linux SBC with USB | ~$75 |
 | 7" IPS Display (1024x600) | Optional — for radar display | ~$35 |
 | USB GPS Dongle | Optional — for auto-positioning | ~$18 |
 
-A single RTL-SDR handles ADS-B. Add a second with a V-dipole for satellite reception. Any Linux SBC with USB works. A display is optional — the agent works headless and sends data to [skytracker.ai/map](https://skytracker.ai/map).
+A single RTL-SDR handles ADS-B. A display is optional — the agent works headless and sends data to [skytracker.ai/map](https://skytracker.ai/map).
+
+### Add-On: Weather Satellite Reception
+
+| Component | Example | Cost |
+|-----------|---------|------|
+| RTL-SDR Blog V4 + V-Dipole | R828D tuner, V-dipole antenna (137 MHz) | ~$40 |
+
+A second SDR with a V-dipole receives METEOR-M LRPT weather satellite imagery. The scheduler time-shares the SDR across passes automatically.
+
+### Add-On: Inmarsat L-Band ACARS
+
+| Component | Example | Cost |
+|-----------|---------|------|
+| RTL-SDR Blog V4 | Dedicated to L-band (1545 MHz) | ~$30 |
+| Wideband L-band patch antenna | 1525–1627 MHz, pointed at Inmarsat satellite | ~$15–25 |
+
+A third SDR with an L-band patch antenna decodes Inmarsat ACARS — aircraft position reports, dispatch messages, and maritime safety broadcasts from geostationary satellites. This fills oceanic gaps where ADS-B ground stations can't reach. The antenna must be pointed at an Inmarsat-4 satellite (e.g., Inmarsat-4 F3 at 98°W for the Americas). See [Inmarsat ACARS Setup](#inmarsat-acars-setup) below.
+
+### Raspberry Pi 4 vs 5
+
+Either works. Pick based on what you're running:
+
+| | Pi 4 (2GB+) | Pi 5 (4GB+) |
+|---|---|---|
+| **ADS-B only** | More than enough | Overkill |
+| **ADS-B + satellite** | Works well | Slightly faster SatDump decoding |
+| **ADS-B + satellite + Inmarsat ACARS** | Works — budget ~25% CPU total | Headroom for future signal types |
+| **Multiple SDRs (3+)** | Fine for 3 SDRs | Better USB controller helps with 4+ |
+| **Display (kiosk)** | Chromium + Canvas is smooth | Noticeably snappier UI rendering |
+| **Price** | ~$45 (2GB) | ~$60 (4GB), ~$75 (8GB) |
+
+**Recommendation:** Pi 4 (2GB) is the sweet spot for most stations. Go Pi 5 if you plan to run 3+ SDRs or want the fastest possible SatDump decoding.
+
+## Inmarsat ACARS Setup
+
+Inmarsat ACARS decodes aircraft messages from geostationary L-band satellites — position reports over the ocean, airline dispatch, military routing, and maritime safety broadcasts. Unlike weather satellites (scheduled passes), Inmarsat runs 24/7 on a dedicated SDR.
+
+### What you need
+
+1. An RTL-SDR Blog V4 (or any RTL-SDR with R828D/R820T tuner)
+2. A wideband L-band patch antenna (1525–1627 MHz)
+3. The antenna pointed at an Inmarsat-4 satellite
+
+### Target satellites
+
+| Satellite | Position | Coverage |
+|-----------|----------|----------|
+| Inmarsat-4 F3 | 98°W | Americas, Atlantic, Gulf of Mexico, Caribbean |
+| Inmarsat-4 F1 | 143.5°E | Asia-Pacific |
+| Inmarsat-4 F2 | 63.9°E | EMEA, Indian Ocean |
+
+Most US-based stations should point at **Inmarsat-4 F3** for Gulf, Caribbean, and transatlantic coverage.
+
+### Configuration
+
+Add to your `config.yaml`:
+
+```yaml
+omni:
+  acars:
+    enabled: true
+    satellite: "inmarsat4-f3"
+    frequency_mhz: 1545.0
+```
+
+The agent auto-detects and reserves one SDR for ACARS. It prefers R828D tuners (best L-band sensitivity). The remaining SDRs stay in the satellite scheduler pool.
+
+### What you receive
+
+- **Position reports** — Aircraft lat/lon, altitude, heading, speed, ETA over oceanic routes
+- **Dispatch messages** — Gate changes, loadsheets, fuel data, crew scheduling
+- **Weather delivery** — METAR/TAF reports transmitted to cockpits
+- **OOOI events** — Pushback, wheels-up, touchdown, gate arrival timestamps
+- **Military dispatch** — Tanker/transport routing commands (e.g., RCH callsign prefixes)
+- **SAR alerts** — Coast guard search and rescue broadcasts (EGC/STD-C)
+- **Navigation warnings** — Hazards to shipping, military exercise zones
+
+### Development (no hardware)
+
+Mock mode generates synthetic Inmarsat ACARS traffic:
+
+```bash
+# Enable ACARS in your config, then:
+./skytracker-agent --mock
+```
+
+The mock decoder produces realistic position reports, dispatch messages, and EGC broadcasts from a fleet of 10 synthetic aircraft over Gulf/Atlantic routes.
 
 ## Aircraft Data & Privacy
 
@@ -169,6 +258,7 @@ The agent auto-registers with skytracker.ai on first boot. No API key or manual 
 - **OTA updater** (`internal/updater/`) — checks GitHub Releases daily, stages updates with SHA256 verification, applies on restart
 - **Satellite scheduler** (`internal/scheduler/`) — time-shares idle SDRs across satellite passes with priority-based preemption
 - **SatDump decoder** (`internal/satellite/`) — launches rtl_tcp + SatDump to receive and decode METEOR-M LRPT weather imagery, reports observations to the platform
+- **ACARS decoder** (`internal/acars/`) — continuous Inmarsat L-band ACARS decoding on a dedicated SDR, with message classification, PII redaction, and batched platform sync
 
 ### Code of Conduct
 
