@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/skytracker/skytracker-device/internal/acars"
 	"github.com/skytracker/skytracker-device/internal/adsb"
 	"github.com/skytracker/skytracker-device/internal/ble"
 	"github.com/skytracker/skytracker-device/internal/config"
@@ -388,6 +389,10 @@ func main() {
 	var sched *scheduler.Scheduler
 	var omniSDRs []sdr.SDRDevice
 
+	// ACARS subsystem (Inmarsat L-band, dedicated SDR, always-on).
+	var acarsDecoder acarsDecoderIface
+	var acarsParser *acars.Parser
+
 	// Build decoder factory: SatDump if available, NoopDecoder otherwise.
 	var decoderFn func(noradID int, satName string) scheduler.Decoder
 	satdumpBin, satdumpErr := exec.LookPath(cfg.Omni.SatDumpBin)
@@ -416,6 +421,17 @@ func main() {
 			}
 			omniMode = sdr.ModeOmniOnly
 			log.Printf("[omni] mock mode: 1 synthetic SDR, mode=%s", omniMode)
+
+			// ACARS mock decoder.
+			if cfg.Omni.ACARS.Enabled {
+				mockACARS := acars.NewMockDecoder()
+				go mockACARS.Run(ctx)
+				acarsDecoder = mockACARS
+				aesDB := acars.NewAESDatabase()
+				acarsParser = acars.NewParser(mockACARS.Messages(), aesDB)
+				go acarsParser.Run(ctx)
+				log.Printf("[acars] mock decoder started (entries=%d)", aesDB.Count())
+			}
 
 			// Start satellite service (real TLE fetch even in mock mode).
 			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
@@ -457,6 +473,24 @@ func main() {
 				}
 			}
 
+			// Reserve a dedicated SDR for ACARS before the scheduler gets the pool.
+			if cfg.Omni.ACARS.Enabled && len(omniSDRs) > 0 && satdumpErr == nil {
+				reserved, remaining := sdr.ReserveACARSSDR(omniSDRs)
+				if reserved != nil {
+					omniSDRs = remaining
+					decoder := acars.NewInmarsatDecoder(cfg.Omni.ACARS, satdumpBin, reserved.SerialNumber)
+					go decoder.Run(ctx)
+					acarsDecoder = decoder
+					aesDB := acars.NewAESDatabase()
+					acarsParser = acars.NewParser(decoder.Messages(), aesDB)
+					go acarsParser.Run(ctx)
+					log.Printf("[acars] Inmarsat decoder started on SDR %s (freq=%.1f MHz, pipeline=%s)",
+						reserved.SerialNumber, cfg.Omni.ACARS.FrequencyMHz, cfg.Omni.ACARS.Pipeline)
+				} else {
+					log.Printf("[acars] no SDR available for ACARS")
+				}
+			}
+
 			// Start satellite service.
 			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
 			go satService.Start(ctx)
@@ -492,9 +526,14 @@ func main() {
 		log.Printf("[omni] disabled by config")
 	}
 
+	// --- ACARS Platform Sync (background) ---
+	if acarsParser != nil && !*mockMode && platHolder.IsConfigured() {
+		go runACARSSync(ctx, platHolder, acarsParser, cfg.Omni.ACARS.SyncIntervalMS)
+	}
+
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -658,7 +697,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -843,6 +882,37 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				healthReq.ActiveDecoder = sched.ActiveDecoder()
 			}
 
+			// ACARS health fields.
+			if acarsDecoder != nil {
+				stats := acarsDecoder.Stats()
+				healthReq.ACARSEnabled = true
+				healthReq.ACARSMessageCount = stats.MessagesDecoded
+				healthReq.ACARSMessageRate = stats.MessageRate
+				healthReq.ACARSSNR = stats.CurrentSNR
+				healthReq.ACARSSatellite = cfg.Omni.ACARS.Satellite
+				healthReq.ACARSFrequency = cfg.Omni.ACARS.FrequencyMHz
+				if acarsDecoder.IsRunning() {
+					healthReq.ACARSDecoderState = "running"
+				} else {
+					healthReq.ACARSDecoderState = "restarting"
+				}
+			}
+
+			// Signal types capability declaration.
+			var signalTypes []string
+			if omniMode == sdr.ModeADSBOmni || omniMode == sdr.ModeADSBOnly {
+				signalTypes = append(signalTypes, "adsb")
+			}
+			if satService != nil {
+				signalTypes = append(signalTypes, "satellite")
+			}
+			if acarsDecoder != nil {
+				signalTypes = append(signalTypes, "acars")
+			}
+			if len(signalTypes) > 0 {
+				healthReq.SignalTypes = signalTypes
+			}
+
 			resp, err := holder.Get().Health(ctx, healthReq)
 			if err != nil {
 				continue
@@ -873,3 +943,69 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 	}
 }
 
+// acarsDecoderIface abstracts over acars.InmarsatDecoder and acars.MockDecoder.
+type acarsDecoderIface interface {
+	Messages() <-chan acars.ACARSRawMessage
+	Stats() acars.DecoderStats
+	IsRunning() bool
+}
+
+// runACARSSync batches ACARS messages and sends them to the platform.
+func runACARSSync(ctx context.Context, holder *platformClientHolder, parser *acars.Parser, intervalMS int) {
+	ticker := time.NewTicker(time.Duration(intervalMS) * time.Millisecond)
+	defer ticker.Stop()
+
+	var batch []platform.ACARSIngestMessage
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-parser.Parsed():
+			if !ok {
+				return
+			}
+			batch = append(batch, platform.ACARSIngestMessage{
+				Timestamp:      msg.Timestamp,
+				Source:         msg.Source,
+				MessageType:    msg.MessageType,
+				AESHex:         msg.AESHex,
+				ICAOHex:        msg.ICAOHex,
+				Callsign:       msg.Callsign,
+				Registration:   msg.Registration,
+				AircraftType:   msg.AircraftType,
+				Lat:            msg.Lat,
+				Lon:            msg.Lon,
+				Altitude:       msg.Altitude,
+				Heading:        msg.Heading,
+				Speed:          msg.Speed,
+				ETAAirport:     msg.ETAAirport,
+				ETATime:        msg.ETATime,
+				Label:          msg.Label,
+				Sublabel:       msg.Sublabel,
+				RawText:        msg.RawText,
+				DecodedSummary: msg.DecodedSummary,
+				Frequency:      msg.Frequency,
+				SignalStrength:  msg.SignalStrength,
+				SatID:          msg.SatID,
+				Channel:        msg.Channel,
+				OOOIEvent:      msg.OOOIEvent,
+				OOOIAirport:    msg.OOOIAirport,
+			})
+		case <-ticker.C:
+			if len(batch) == 0 {
+				continue
+			}
+			toSend := batch
+			batch = nil
+
+			client := holder.Get()
+			if client == nil {
+				continue
+			}
+			if err := client.IngestACARSMessages(ctx, toSend); err != nil {
+				log.Printf("[acars] ingest failed (%d msgs): %v", len(toSend), err)
+			}
+		}
+	}
+}

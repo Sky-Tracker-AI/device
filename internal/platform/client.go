@@ -176,6 +176,18 @@ type HealthRequest struct {
 	SchedulerState     string           `json:"scheduler_state,omitempty"`
 	ActiveDecoder      string           `json:"active_decoder,omitempty"`
 	OmniMode           string           `json:"omni_mode,omitempty"`
+
+	// Signal types declares active capabilities (e.g. ["adsb", "satellite", "acars"]).
+	SignalTypes []string `json:"signal_types,omitempty"`
+
+	// ACARS extensions (omitted when ACARS is not enabled).
+	ACARSEnabled      bool    `json:"acars_enabled,omitempty"`
+	ACARSMessageCount int     `json:"acars_message_count,omitempty"`
+	ACARSMessageRate  float64 `json:"acars_message_rate,omitempty"`
+	ACARSDecoderState string  `json:"acars_decoder_state,omitempty"` // "running", "stopped", "restarting"
+	ACARSSNR          float64 `json:"acars_snr,omitempty"`
+	ACARSSatellite    string  `json:"acars_satellite,omitempty"`
+	ACARSFrequency    float64 `json:"acars_frequency,omitempty"`
 }
 
 // UpcomingPass is a device-predicted satellite pass sent in the health report.
@@ -420,6 +432,76 @@ func (c *Client) ConfirmWeatherImageUpload(ctx context.Context, imageID string) 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("confirm weather image: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// ACARSIngestMessage is a single ACARS message for batch upload.
+type ACARSIngestMessage struct {
+	Timestamp      int64   `json:"timestamp"`
+	Source         string  `json:"source"`                    // "aero" or "stdc"
+	MessageType    string  `json:"message_type"`              // pos, acars, wx, oooi, mil, sar, nav, egc
+	AESHex         string  `json:"aes_hex,omitempty"`
+	ICAOHex        string  `json:"icao_hex,omitempty"`
+	Callsign       string  `json:"callsign,omitempty"`
+	Registration   string  `json:"registration,omitempty"`
+	AircraftType   string  `json:"aircraft_type,omitempty"`
+	Lat            float64 `json:"lat,omitempty"`
+	Lon            float64 `json:"lon,omitempty"`
+	Altitude       int     `json:"altitude,omitempty"`
+	Heading        float64 `json:"heading,omitempty"`
+	Speed          float64 `json:"speed,omitempty"`
+	ETAAirport     string  `json:"eta_airport,omitempty"`
+	ETATime        int64   `json:"eta_time,omitempty"`
+	Label          string  `json:"label,omitempty"`
+	Sublabel       string  `json:"sublabel,omitempty"`
+	RawText        string  `json:"raw_text"`
+	DecodedSummary string  `json:"decoded_summary,omitempty"`
+	Frequency      float64 `json:"frequency,omitempty"`
+	SignalStrength float64 `json:"signal_strength,omitempty"`
+	SatID          string  `json:"sat_id,omitempty"`
+	Channel        string  `json:"channel,omitempty"`
+	OOOIEvent      string  `json:"oooi_event,omitempty"`
+	OOOIAirport    string  `json:"oooi_airport,omitempty"`
+}
+
+// acarsIngestRequest wraps ACARS messages for the ingest endpoint.
+type acarsIngestRequest struct {
+	SourceType    string               `json:"source_type"`
+	ACARSMessages []ACARSIngestMessage `json:"acars_messages"`
+}
+
+// IngestACARSMessages sends a batch of ACARS messages to the platform.
+func (c *Client) IngestACARSMessages(ctx context.Context, msgs []ACARSIngestMessage) error {
+	if !c.IsConfigured() {
+		return fmt.Errorf("not configured (no API key)")
+	}
+
+	req := acarsIngestRequest{
+		SourceType:    "acars",
+		ACARSMessages: msgs,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("ingest acars: status %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
 }

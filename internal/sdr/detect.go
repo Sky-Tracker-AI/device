@@ -148,6 +148,45 @@ func DetermineMode(readsbActive bool, availableSDRs int) Mode {
 	}
 }
 
+// ReserveACARSSDR picks one SDR from the available pool for dedicated ACARS use.
+// Prefers R828D tuners (best L-band performance), then R820T2, then R820T.
+// Returns the reserved device and the remaining pool for the scheduler.
+func ReserveACARSSDR(available []SDRDevice) (reserved *SDRDevice, remaining []SDRDevice) {
+	if len(available) == 0 {
+		return nil, nil
+	}
+
+	bestIdx := -1
+	bestScore := -1
+	for i, dev := range available {
+		score := 0
+		switch dev.TunerType {
+		case "R828D":
+			score = 3
+		case "R820T2":
+			score = 2
+		case "R820T":
+			score = 1
+		default:
+			score = 1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+
+	if bestIdx < 0 {
+		return nil, available
+	}
+
+	dev := available[bestIdx]
+	remaining = make([]SDRDevice, 0, len(available)-1)
+	remaining = append(remaining, available[:bestIdx]...)
+	remaining = append(remaining, available[bestIdx+1:]...)
+	return &dev, remaining
+}
+
 // ProgramSerial programs a serial number onto an RTL-SDR dongle via rtl_eeprom.
 // This is a one-time operation that persists in the dongle's EEPROM.
 func ProgramSerial(deviceIndex int, serial string) error {

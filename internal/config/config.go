@@ -19,12 +19,25 @@ type Config struct {
 }
 
 type OmniConfig struct {
+	Enabled          bool        `yaml:"enabled"`
+	MinElevation     float64     `yaml:"min_elevation"`
+	TLERefreshHrs    int         `yaml:"tle_refresh_hrs"`
+	SchedulerEnabled bool        `yaml:"scheduler_enabled"`
+	SatDumpBin       string      `yaml:"satdump_bin"`
+	DecoderOutputDir string      `yaml:"decoder_output_dir"`
+	ACARS            ACARSConfig `yaml:"acars"`
+}
+
+// ACARSConfig controls the Inmarsat L-band ACARS decoder subsystem.
+type ACARSConfig struct {
 	Enabled          bool    `yaml:"enabled"`
-	MinElevation     float64 `yaml:"min_elevation"`
-	TLERefreshHrs    int     `yaml:"tle_refresh_hrs"`
-	SchedulerEnabled bool    `yaml:"scheduler_enabled"`
-	SatDumpBin       string  `yaml:"satdump_bin"`
-	DecoderOutputDir string  `yaml:"decoder_output_dir"`
+	Satellite        string  `yaml:"satellite"`           // e.g. "inmarsat4-f3"
+	FrequencyMHz     float64 `yaml:"frequency_mhz"`       // Aero channel center freq
+	STDCFrequencyMHz float64 `yaml:"stdc_frequency_mhz"`  // STD-C channel freq
+	SampleRate       int     `yaml:"sample_rate"`
+	TCPPort          string  `yaml:"tcp_port"`             // rtl_tcp port (distinct from scheduler)
+	SyncIntervalMS   int     `yaml:"sync_interval_ms"`     // Platform ingest batch interval
+	Pipeline         string  `yaml:"pipeline"`             // SatDump pipeline ID
 }
 
 type StationConfig struct {
@@ -112,6 +125,16 @@ func Default() *Config {
 			SchedulerEnabled: true,
 			SatDumpBin:       "satdump",
 			DecoderOutputDir: "/tmp/skytracker-sat",
+			ACARS: ACARSConfig{
+				Enabled:          false,
+				Satellite:        "inmarsat4-f3",
+				FrequencyMHz:     1545.0,
+				STDCFrequencyMHz: 1537.0,
+				SampleRate:       1200000,
+				TCPPort:          "7655",
+				SyncIntervalMS:   5000,
+				Pipeline:         "inmarsat_aero_6",
+			},
 		},
 	}
 }
