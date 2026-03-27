@@ -69,6 +69,72 @@ The device reports its active signal types (e.g. `["adsb", "satellite", "acars"]
 
 These will be added as a BLE characteristic in a future release so the iOS app can configure signal types during onboarding.
 
+### Onboarding via SSH
+
+If you don't have the iOS app or prefer to set up manually, you can onboard a device entirely over SSH.
+
+**1. Connect to the Pi:**
+
+```bash
+ssh pi@skytracker.local
+```
+
+**2. Set your WiFi (if not already connected):**
+
+```bash
+sudo nmcli dev wifi connect "YourNetwork" password "YourPassword"
+```
+
+**3. Edit the config:**
+
+```bash
+sudo nano /etc/skytracker/config.yaml
+```
+
+Set your station location and any signal type options:
+
+```yaml
+station:
+  name: "My Station"
+  sharing: public
+  lat: 30.2672
+  lon: -97.7431
+
+omni:
+  acars:
+    enabled: true              # Enable if you have an L-band SDR + patch antenna
+    satellite: "inmarsat4-f3"  # Americas; use inmarsat4-f1 (APAC) or inmarsat4-f2 (EMEA)
+```
+
+**4. Restart the agent:**
+
+```bash
+sudo systemctl restart skytracker-agent
+```
+
+**5. Check the logs:**
+
+```bash
+journalctl -u skytracker-agent -f
+```
+
+You should see the agent start, detect SDRs, and begin syncing. Look for lines like:
+
+```
+[omni] detected 2 total SDR(s), 1 available for omni, mode=adsb_omni
+[acars] Inmarsat decoder started on SDR SKT-OMNI-0 (freq=1545.0 MHz)
+```
+
+**6. Claim your station:**
+
+The agent auto-registers on first boot. The claim code is in the state file:
+
+```bash
+sudo cat /var/lib/skytracker/state.json | python3 -m json.tool
+```
+
+Go to [skytracker.ai/claim](https://skytracker.ai/claim) and enter the claim code to link the station to your account.
+
 ## Development
 
 No SBC or SDR hardware required. The agent includes a mock mode with synthetic aircraft data.
