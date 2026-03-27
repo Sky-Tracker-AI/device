@@ -209,7 +209,7 @@ The agent respects FAA **LADD** (Limiting Aircraft Data Displayed) flags. LADD-f
 - **Have identifying info suppressed** — registration, owner, and operator are stripped from WebSocket broadcasts and platform ingest
 - Type code and type name are shown (describes the aircraft model, not the specific tail)
 
-**PIA** (Privacy ICAO Address) aircraft have their registration stripped at load time. **Military** aircraft are flagged for optional UI treatment.
+**PIA** (Privacy ICAO Address) aircraft have their registration stripped at load time. **Military** aircraft are flagged so the UI can display them with a distinct icon.
 
 ## Contributing
 
