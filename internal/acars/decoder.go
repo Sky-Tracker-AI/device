@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -135,12 +136,17 @@ func (d *InmarsatDecoder) runPipeline(ctx context.Context) error {
 	if serial == "" {
 		serial = "0"
 	}
+	// Offset the tuner by 200 kHz to move the RTL-SDR DC spike away from the
+	// signal. SatDump's --freq_shift compensates so the demodulator still finds
+	// the real carrier.
+	const dcOffset int64 = 200000
 	tcpArgs := []string{
 		"-d", serial,
-		"-f", strconv.FormatInt(d.freqHz, 10),
-		"-g", "20",
+		"-f", strconv.FormatInt(d.freqHz-dcOffset, 10),
+		"-g", "40",
 		"-s", strconv.Itoa(d.sampleRate),
 		"-p", d.tcpPort,
+		"-T",
 	}
 
 	tcpCmd := exec.CommandContext(childCtx, "rtl_tcp", tcpArgs...)
@@ -160,9 +166,13 @@ func (d *InmarsatDecoder) runPipeline(ctx context.Context) error {
 	// Give rtl_tcp time to initialize hardware and bind port.
 	time.Sleep(2 * time.Second)
 
-	// Start SatDump Inmarsat pipeline.
-	// No --timeout flag: runs indefinitely (unlike per-pass satellite decoder).
+	// Clean stale output from previous runs.
+	os.RemoveAll(d.outputDir)
+	os.MkdirAll(d.outputDir, 0755)
+
+	// Start SatDump Inmarsat pipeline (2.0 moved "live" under "legacy" subcommand).
 	args := []string{
+		"legacy",
 		"live",
 		d.pipeline,
 		d.outputDir,
@@ -170,10 +180,17 @@ func (d *InmarsatDecoder) runPipeline(ctx context.Context) error {
 		"--ip_address", "127.0.0.1",
 		"--port", d.tcpPort,
 		"--samplerate", strconv.Itoa(d.sampleRate),
-		"--frequency", strconv.FormatInt(d.freqHz, 10),
+		"--frequency", strconv.FormatInt(d.freqHz-dcOffset, 10),
+		"--freq_shift", strconv.FormatInt(dcOffset, 10),
 	}
 
 	cmd := exec.CommandContext(childCtx, d.satdumpBin, args...)
+	cmd.Dir = "/usr/share/satdump" // SatDump 2.0 needs its resource directory as cwd.
+
+	// SatDump crashes if HOME is unset (null std::string in config path).
+	if os.Getenv("HOME") == "" {
+		cmd.Env = append(os.Environ(), "HOME=/root")
+	}
 
 	// Capture stdout for decoded ACARS messages (JSON lines).
 	stdout, err := cmd.StdoutPipe()

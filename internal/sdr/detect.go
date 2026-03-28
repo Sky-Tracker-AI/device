@@ -209,6 +209,9 @@ func ProgramSerial(deviceIndex int, serial string) error {
 
 // ProgramSerials assigns SKT-OMNI-N serial numbers to SDR devices with
 // empty or generic serials. Returns the number of devices programmed.
+// Note: EEPROM changes only take effect after a USB replug, so the in-memory
+// SerialNumber is set to the device index (e.g. "0") for the current session
+// to ensure rtl_tcp can address the device.
 func ProgramSerials(devices []SDRDevice) int {
 	programmed := 0
 	for i, dev := range devices {
@@ -220,7 +223,9 @@ func ProgramSerials(devices []SDRDevice) int {
 			log.Printf("[sdr] failed to program serial for device %d: %v", i, err)
 			continue
 		}
-		devices[i].SerialNumber = serial
+		// Use device index for the current session since the EEPROM serial
+		// won't be visible to rtl_tcp until the dongle is physically replugged.
+		devices[i].SerialNumber = strconv.Itoa(i)
 		programmed++
 	}
 	return programmed

@@ -92,7 +92,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	tcpArgs := []string{
 		"-d", serial,
 		"-f", strconv.FormatInt(freqHz, 10),
-		"-g", "20",
+		"-g", "40",
 		"-s", strconv.Itoa(d.pipeline.SampleRate),
 		"-p", tcpPort,
 	}
@@ -112,8 +112,9 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	// Give rtl_tcp time to initialize the hardware and bind the port.
 	time.Sleep(2 * time.Second)
 
-	// Build SatDump command connecting via rtl_tcp.
+	// Build SatDump command connecting via rtl_tcp (2.0 moved "live" under "legacy" subcommand).
 	args := []string{
+		"legacy",
 		"live",
 		d.pipeline.PipelineID,
 		d.outputDir,
@@ -126,6 +127,11 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	}
 
 	d.cmd = exec.CommandContext(childCtx, d.satdumpBin, args...)
+	d.cmd.Dir = "/usr/share/satdump" // SatDump 2.0 needs its resource directory as cwd.
+	// SatDump crashes if HOME is unset (null std::string in config path).
+	if os.Getenv("HOME") == "" {
+		d.cmd.Env = append(os.Environ(), "HOME=/root")
+	}
 	d.cmd.Stdout = nil // Discard stdout; SatDump writes to files.
 
 	// Capture stderr for SNR and frame count parsing.

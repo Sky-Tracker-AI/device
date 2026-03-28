@@ -158,6 +158,50 @@ install_bluetooth() {
     systemctl start bluetooth >/dev/null 2>&1 || true
 }
 
+# ── Install SatDump (satellite decoder) ──────────────────────────────────────
+
+install_satdump() {
+    if command -v satdump &>/dev/null; then
+        local current_ver
+        current_ver="$(satdump --version 2>&1 | grep -oP 'v\K[0-9]+\.[0-9]+' | head -1 || echo "0")"
+        if [[ "$current_ver" == "2.0" ]]; then
+            success "SatDump 2.0 already installed"
+            return
+        fi
+        info "Removing old SatDump..."
+        apt-get remove -y -qq satdump satdump-data >/dev/null 2>&1 || true
+    fi
+
+    info "Installing SatDump 2.0 (nightly)..."
+
+    local deb_url="https://github.com/SatDump/SatDump/releases/download/nightly/satdump_rpi64_latest_arm64.deb"
+    local deb_path="/tmp/satdump_nightly.deb"
+
+    if [[ "$ARCH" != "arm64" ]]; then
+        warn "SatDump nightly .deb only available for arm64 — skipping"
+        return
+    fi
+
+    curl -fsSL -o "$deb_path" "$deb_url" || {
+        warn "Failed to download SatDump — satellite decoding will be unavailable"
+        return
+    }
+
+    # The nightly .deb may have dependency mismatches on newer Debian (trixie).
+    # Force install and hold the package to prevent apt from removing it.
+    dpkg --force-depends -i "$deb_path" >/dev/null 2>&1 || {
+        warn "SatDump install had dependency warnings (non-fatal)"
+    }
+    apt-mark hold satdump >/dev/null 2>&1 || true
+    rm -f "$deb_path"
+
+    if command -v satdump &>/dev/null; then
+        success "SatDump 2.0 installed"
+    else
+        warn "SatDump installation failed — satellite decoding will be unavailable"
+    fi
+}
+
 # ── Download agent binary ────────────────────────────────────────────────────
 
 download_agent() {
@@ -447,6 +491,7 @@ main() {
     install_adsb_decoder
     install_gps
     install_bluetooth
+    install_satdump
     download_agent
     download_ui
     download_enrichment
