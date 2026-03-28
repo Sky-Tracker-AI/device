@@ -195,6 +195,29 @@ install_satdump() {
     apt-mark hold satdump >/dev/null 2>&1 || true
     rm -f "$deb_path"
 
+    # SatDump 2.0 looks for plugins in ./plugins relative to its cwd
+    # (/usr/share/satdump). The .deb installs them to /usr/lib/satdump/plugins.
+    if [[ -d /usr/lib/satdump/plugins ]] && [[ ! -e /usr/share/satdump/plugins ]]; then
+        ln -sf /usr/lib/satdump/plugins /usr/share/satdump/plugins
+    fi
+
+    # The SatDump 2.0 nightly .deb has duplicate pipeline names across plugins
+    # (e.g. himawaricast_data_decoder, goes_gvar_decoder) which crash the CLI
+    # parser. Keep only the plugins SkyTracker actually needs and move the rest
+    # out of the way.
+    if [[ -d /usr/lib/satdump/plugins ]]; then
+        local keep="libmeteor_support.so librtltcp_support.so librtlsdr_sdr_support.so \
+libsimd_neon.so libnet_source_support.so libnoaa_metop_support.so \
+libinmarsat_support.so libanalog_support.so"
+        mkdir -p /usr/lib/satdump/plugins.disabled
+        for f in /usr/lib/satdump/plugins/*.so; do
+            local base; base="$(basename "$f")"
+            if ! echo "$keep" | grep -qw "$base"; then
+                mv "$f" /usr/lib/satdump/plugins.disabled/ 2>/dev/null || true
+            fi
+        done
+    fi
+
     if command -v satdump &>/dev/null; then
         success "SatDump 2.0 installed"
     else
