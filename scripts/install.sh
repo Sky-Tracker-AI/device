@@ -208,7 +208,7 @@ install_satdump() {
     if [[ -d /usr/lib/satdump/plugins ]]; then
         local keep="libmeteor_support.so librtltcp_support.so librtlsdr_sdr_support.so \
 libsimd_neon.so libnet_source_support.so libnoaa_metop_support.so \
-libinmarsat_support.so libanalog_support.so"
+libinmarsat_support.so libanalog_support.so libgoes_support.so"
         mkdir -p /usr/lib/satdump/plugins.disabled
         for f in /usr/lib/satdump/plugins/*.so; do
             local base; base="$(basename "$f")"

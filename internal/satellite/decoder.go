@@ -113,6 +113,8 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	time.Sleep(2 * time.Second)
 
 	// Build SatDump command connecting via rtl_tcp (2.0 moved "live" under "legacy" subcommand).
+	// --gain is required: SatDump 2.0's rtl_tcp client sends a gain command on
+	// connect, overriding whatever rtl_tcp was started with.
 	args := []string{
 		"legacy",
 		"live",
@@ -123,6 +125,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		"--port", tcpPort,
 		"--samplerate", strconv.Itoa(d.pipeline.SampleRate),
 		"--frequency", strconv.FormatInt(freqHz, 10),
+		"--gain", "40",
 		"--timeout", "1200",
 	}
 
