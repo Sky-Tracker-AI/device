@@ -69,13 +69,26 @@ func NewProductWatcher(cfg config.GOESConfig, outputDir string, onProduct func(P
 		composites[pt] = entry.Composites
 	}
 
+	// Pre-populate seen map with existing files so we don't re-upload
+	// stale images from a previous run on restart.
+	seen := make(map[string]bool)
+	filepath.WalkDir(outputDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(path), ".png") {
+			seen[path] = true
+		}
+		return nil
+	})
+
 	return &ProductWatcher{
 		outputDir:         outputDir,
 		maxStorageBytes:   int64(cfg.MaxLocalStorageGB) * 1024 * 1024 * 1024,
 		cadence:           cadence,
 		composites:        composites,
 		lastUpload:        make(map[ProductType]time.Time),
-		seen:              make(map[string]bool),
+		seen:              seen,
 		pendingCh:         make(chan ProductInfo, 100),
 		onProduct:         onProduct,
 		latestProducts:    make(map[ProductType]ProductInfo),
