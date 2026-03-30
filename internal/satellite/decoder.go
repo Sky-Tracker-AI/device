@@ -29,9 +29,8 @@ var (
 )
 
 // SatDumpDecoder implements scheduler.Decoder by managing a SatDump process.
-// It pipes IQ samples from rtl_sdr into SatDump's new pipeline mode, which
-// processes baseband data from stdin. This bypasses the broken legacy live
-// rtl_tcp path in SatDump 2.0-alpha.
+// It uses SatDump's direct RTL-SDR source (--source rtlsdr) to access the
+// SDR hardware without an rtl_tcp intermediary.
 type SatDumpDecoder struct {
 	noradID    int
 	satName    string
@@ -82,42 +81,30 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	childCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel
 
+	// Use SatDump's direct RTL-SDR source (no rtl_tcp intermediary).
+	// Gain is low (20) because the SAWbird+ LNA adds +30-40 dB externally.
 	serial := handle.SerialNumber()
 	if serial == "" {
 		serial = "0"
 	}
 
-	// Use rtl_sdr piped into satdump pipeline (new 2.0 pipeline mode).
-	// The legacy live + rtl_tcp path has a broken data pipeline in SatDump 2.0-alpha
-	// where IQ data doesn't reach the demodulator. The new pipeline mode's offline
-	// baseband processing works correctly, and accepts /dev/stdin for live streaming.
-	sdrArgs := []string{
-		"-d", serial,
-		"-f", strconv.FormatInt(freqHz, 10),
-		"-g", "40",
-		"-s", strconv.Itoa(d.pipeline.SampleRate),
-		"-", // write to stdout
-	}
-
 	args := []string{
-		"pipeline",
+		"legacy",
+		"live",
 		d.pipeline.PipelineID,
-		"baseband",
-		"/dev/stdin",
 		d.outputDir,
-		"--baseband_format=cu8",
-		"--samplerate=" + strconv.Itoa(d.pipeline.SampleRate),
+		"--source", "rtlsdr",
+		"--source_id", serial,
+		"--samplerate", strconv.Itoa(d.pipeline.SampleRate),
+		"--frequency", strconv.FormatInt(freqHz, 10),
+		"--gain", "20",
+		"--bias",
+		"--timeout", "1200",
 	}
-
-	// Set up rtl_sdr → satdump pipeline via OS pipe.
-	d.tcpCmd = exec.CommandContext(childCtx, "rtl_sdr", sdrArgs...)
-	d.tcpCmd.Stderr = nil
 
 	d.cmd = exec.CommandContext(childCtx, d.satdumpBin, args...)
-	d.cmd.Dir = "/usr/share/satdump" // SatDump 2.0 needs its resource directory as cwd.
-	// Set LD_LIBRARY_PATH so plugins with cross-dependencies (e.g.
-	// libgoes_support.so → libxrit_support.so) resolve correctly and
-	// SatDump's double plugin-scan deduplication works.
+	d.cmd.Dir = "/usr/share/satdump"
+	// Set LD_LIBRARY_PATH so plugins resolve correctly.
 	env := os.Environ()
 	pluginDir := "/usr/share/satdump/plugins"
 	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
@@ -131,33 +118,20 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 	d.cmd.Env = env
 	d.cmd.Stdout = nil
 
-	// Wire rtl_sdr stdout → satdump stdin.
-	sdrOut, err := d.tcpCmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("rtl_sdr stdout pipe: %w", err)
-	}
-	d.cmd.Stdin = sdrOut
-
 	// Capture stderr for SNR and frame count parsing.
 	stderr, err := d.cmd.StderrPipe()
 	if err != nil {
 		cancel()
+		d.tcpCmd.Process.Kill()
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	log.Printf("[satdump] starting: rtl_sdr %v | %s %v", sdrArgs, d.satdumpBin, args)
+	log.Printf("[satdump] starting: %s %v", d.satdumpBin, args)
 
-	// Start satdump first (it blocks on stdin), then rtl_sdr to feed it.
 	if err := d.cmd.Start(); err != nil {
 		cancel()
+		d.tcpCmd.Process.Kill()
 		return fmt.Errorf("start satdump: %w", err)
-	}
-
-	if err := d.tcpCmd.Start(); err != nil {
-		cancel()
-		d.cmd.Process.Kill()
-		return fmt.Errorf("start rtl_sdr: %w", err)
 	}
 
 	d.running = true
