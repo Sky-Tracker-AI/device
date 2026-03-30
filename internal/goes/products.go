@@ -72,7 +72,7 @@ func NewProductWatcher(cfg config.GOESConfig, outputDir string, onProduct func(P
 	// Pre-populate seen map with existing files so we don't re-upload
 	// stale images from a previous run on restart.
 	seen := make(map[string]bool)
-	filepath.WalkDir(outputDir, func(path string, d os.DirEntry, err error) error {
+	filepath.WalkDir(filepath.Join(outputDir, "IMAGES"), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -122,16 +122,14 @@ func (w *ProductWatcher) LatestProducts() map[ProductType]ProductInfo {
 	return result
 }
 
-// scan walks the output directory looking for new PNG files.
+// scan walks the IMAGES subdirectory looking for new PNG files.
+// Only scans IMAGES/ to avoid picking up EMWIN/NWS weather charts
+// and other non-imagery products that SatDump outputs.
 func (w *ProductWatcher) scan() {
-	entries, err := os.ReadDir(w.outputDir)
-	if err != nil {
-		return
-	}
+	imagesDir := filepath.Join(w.outputDir, "IMAGES")
 
-	// SatDump writes products into subdirectories. Walk recursively.
 	var files []string
-	filepath.WalkDir(w.outputDir, func(path string, d os.DirEntry, err error) error {
+	filepath.WalkDir(imagesDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -140,7 +138,6 @@ func (w *ProductWatcher) scan() {
 		}
 		return nil
 	})
-	_ = entries // WalkDir covers everything
 
 	for _, path := range files {
 		if w.seen[path] {
