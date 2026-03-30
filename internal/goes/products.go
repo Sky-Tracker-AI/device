@@ -261,21 +261,25 @@ func classifyProductType(path string) ProductType {
 	}
 }
 
-// classifyComposite determines the composite type from the file path.
+// classifyComposite extracts the composite name from a SatDump output filename.
+// Composites are named like "abi_ABI_False_Color.png" or "abi_Cloud_Top_IR.png".
+// Raw channel files are named like "G19_13_20260330T150021Z.png".
 func classifyComposite(path string) string {
-	lower := strings.ToLower(path)
-	switch {
-	case strings.Contains(lower, "true_color") || strings.Contains(lower, "truecolor"):
-		return "true_color"
-	case strings.Contains(lower, "ir_enhanced") || strings.Contains(lower, "ir enhanced"):
-		return "ir_enhanced"
-	case strings.Contains(lower, "water_vapor") || strings.Contains(lower, "watervapor"):
-		return "water_vapor"
-	case strings.Contains(lower, "sandwich"):
-		return "sandwich"
-	case strings.Contains(lower, "fire") || strings.Contains(lower, "fire_temperature"):
-		return "fire_temperature"
-	default:
-		return ""
+	base := filepath.Base(path)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+
+	// Named composites: strip "abi_" prefix.
+	if strings.HasPrefix(name, "abi_") {
+		return strings.TrimPrefix(name, "abi_")
 	}
+
+	// Raw channel files: "G19_13_..." → "channel_13"
+	if len(name) > 3 && (name[0] == 'G') {
+		parts := strings.SplitN(name, "_", 3)
+		if len(parts) >= 2 {
+			return "channel_" + parts[1]
+		}
+	}
+
+	return name
 }
