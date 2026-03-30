@@ -188,6 +188,16 @@ type HealthRequest struct {
 	ACARSSNR          float64 `json:"acars_snr,omitempty"`
 	ACARSSatellite    string  `json:"acars_satellite,omitempty"`
 	ACARSFrequency    float64 `json:"acars_frequency,omitempty"`
+
+	// GOES HRIT extensions (omitted when GOES is not enabled).
+	GOESEnabled       bool    `json:"goes_enabled,omitempty"`
+	GOESSatellite     string  `json:"goes_satellite,omitempty"`     // "GOES-16" or "GOES-18"
+	GOESSNR           float64 `json:"goes_snr_db,omitempty"`
+	GOESViterbiBER    float64 `json:"goes_viterbi_ber,omitempty"`
+	GOESRSCorrections int     `json:"goes_rs_corrections,omitempty"`
+	GOESFramesDecoded int     `json:"goes_frames_decoded,omitempty"`
+	GOESDecoderState  string  `json:"goes_decoder_state,omitempty"` // "running", "stopped", "restarting"
+	GOESImages24h     int     `json:"goes_images_24h,omitempty"`
 }
 
 // UpcomingPass is a device-predicted satellite pass sent in the health report.
@@ -272,6 +282,11 @@ type WeatherImageUpload struct {
 	ImageHeight   int      `json:"image_height,omitempty"`
 	FileSizeBytes int      `json:"file_size_bytes"`
 	CapturedAt    int64    `json:"captured_at"`
+
+	// GOES HRIT extensions (omitted for LEO imagery).
+	SourceType    string `json:"source_type,omitempty"`    // "lrpt", "apt", or "hrit"
+	ProductType   string `json:"product_type,omitempty"`   // GOES: "full_disk", "conus", "mesoscale"
+	CompositeName string `json:"composite_name,omitempty"` // e.g. "true_color", "ir_enhanced"
 }
 
 // satelliteIngestRequest wraps a satellite observation for the ingest endpoint.

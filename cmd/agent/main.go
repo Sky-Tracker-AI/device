@@ -22,6 +22,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/config"
 	"github.com/skytracker/skytracker-device/internal/enrichment"
 	"github.com/skytracker/skytracker-device/internal/geo"
+	"github.com/skytracker/skytracker-device/internal/goes"
 	"github.com/skytracker/skytracker-device/internal/gpsd"
 	"github.com/skytracker/skytracker-device/internal/platform"
 	"github.com/skytracker/skytracker-device/internal/queue"
@@ -393,6 +394,9 @@ func main() {
 	var acarsDecoder acarsDecoderIface
 	var acarsParser *acars.Parser
 
+	// GOES HRIT subsystem (geostationary weather, dedicated SDR, always-on).
+	var goesDecoder *goes.Decoder
+
 	// Build decoder factory: SatDump if available, NoopDecoder otherwise.
 	var decoderFn func(noradID int, satName string) scheduler.Decoder
 	satdumpBin, satdumpErr := exec.LookPath(cfg.Omni.SatDumpBin)
@@ -491,6 +495,27 @@ func main() {
 				}
 			}
 
+			// Reserve a dedicated SDR for GOES HRIT before the scheduler gets the pool.
+			if cfg.Omni.GOES.Enabled && len(omniSDRs) > 0 && satdumpErr == nil {
+				reserved, remaining := sdr.ReserveGOESSDR(omniSDRs)
+				if reserved != nil {
+					omniSDRs = remaining
+					goesDecoder = goes.NewDecoder(cfg.Omni.GOES, satdumpBin, reserved.SerialNumber)
+					go goesDecoder.Run(ctx)
+
+					goesReporter := goes.NewReporter(platHolder.Get, agentState.GetStationID, cfg.Omni.GOES.Satellite)
+					watcher := goes.NewProductWatcher(cfg.Omni.GOES, goesDecoder.OutputDir(), func(p goes.ProductInfo) {
+						goesReporter.Upload(ctx, p)
+					})
+					go watcher.Run(ctx)
+
+					log.Printf("[goes] HRIT decoder started on SDR %s (satellite=%s, freq=%.1f MHz)",
+						reserved.SerialNumber, cfg.Omni.GOES.Satellite, cfg.Omni.GOES.FrequencyMHz)
+				} else {
+					log.Printf("[goes] no SDR available for GOES HRIT")
+				}
+			}
+
 			// Start satellite service.
 			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
 			go satService.Start(ctx)
@@ -533,7 +558,7 @@ func main() {
 
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -697,7 +722,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -898,6 +923,22 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				}
 			}
 
+			// GOES HRIT health fields.
+			if goesDecoder != nil {
+				stats := goesDecoder.Stats()
+				healthReq.GOESEnabled = true
+				healthReq.GOESSatellite = cfg.Omni.GOES.Satellite
+				healthReq.GOESSNR = stats.CurrentSNR
+				healthReq.GOESViterbiBER = stats.ViterbiBER
+				healthReq.GOESRSCorrections = stats.RSCorrections
+				healthReq.GOESFramesDecoded = stats.FramesDecoded
+				if goesDecoder.IsRunning() {
+					healthReq.GOESDecoderState = "running"
+				} else {
+					healthReq.GOESDecoderState = "restarting"
+				}
+			}
+
 			// Signal types capability declaration.
 			var signalTypes []string
 			if omniMode == sdr.ModeADSBOmni || omniMode == sdr.ModeADSBOnly {
@@ -908,6 +949,9 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			}
 			if acarsDecoder != nil {
 				signalTypes = append(signalTypes, "acars")
+			}
+			if goesDecoder != nil {
+				signalTypes = append(signalTypes, "goes")
 			}
 			if len(signalTypes) > 0 {
 				healthReq.SignalTypes = signalTypes

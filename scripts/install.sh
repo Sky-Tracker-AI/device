@@ -182,6 +182,23 @@ install_satdump() {
         return
     fi
 
+    # Pre-install runtime dependencies. The nightly .deb targets Bookworm but
+    # Debian Trixie ships newer sonames for some libraries. Install what we can
+    # before dpkg so that apt stays healthy.
+    info "Installing SatDump runtime dependencies..."
+    apt-get install -y -qq \
+        libfftw3-bin libfftw3-dev \
+        libjemalloc2 \
+        libhackrf0 \
+        libairspy0 \
+        libairspyhf1 \
+        libglfw3-wayland \
+        libportaudiocpp0 \
+        libdbus-1-dev \
+        libvolk-bin \
+        libnng1 \
+        >/dev/null 2>&1 || warn "Some optional SatDump dependencies unavailable (non-fatal)"
+
     curl -fsSL -o "$deb_path" "$deb_url" || {
         warn "Failed to download SatDump — satellite decoding will be unavailable"
         return
@@ -194,6 +211,19 @@ install_satdump() {
     }
     apt-mark hold satdump >/dev/null 2>&1 || true
     rm -f "$deb_path"
+
+    # The nightly .deb links against libvolk.so.2.5 (Bookworm) but Trixie
+    # ships libvolk 3.x. Create a compat symlink if the expected soname is
+    # missing but a newer version exists.
+    if ! ldconfig -p 2>/dev/null | grep -q "libvolk.so.2.5"; then
+        local volk_real
+        volk_real="$(find /usr/lib -name 'libvolk.so.*' ! -name '*.so.2.5' 2>/dev/null | head -1)"
+        if [[ -n "$volk_real" ]]; then
+            ln -sf "$volk_real" /usr/lib/aarch64-linux-gnu/libvolk.so.2.5
+            ldconfig
+            info "Created libvolk compat symlink: libvolk.so.2.5 -> $(basename "$volk_real")"
+        fi
+    fi
 
     # SatDump 2.0 looks for plugins in ./plugins relative to its cwd
     # (/usr/share/satdump). The .deb installs them to /usr/lib/satdump/plugins.
@@ -208,7 +238,7 @@ install_satdump() {
     if [[ -d /usr/lib/satdump/plugins ]]; then
         local keep="libmeteor_support.so librtltcp_support.so librtlsdr_sdr_support.so \
 libsimd_neon.so libnet_source_support.so libnoaa_metop_support.so \
-libinmarsat_support.so libanalog_support.so libgoes_support.so"
+libinmarsat_support.so libanalog_support.so libgoes_support.so libxrit_support.so"
         mkdir -p /usr/lib/satdump/plugins.disabled
         for f in /usr/lib/satdump/plugins/*.so; do
             local base; base="$(basename "$f")"

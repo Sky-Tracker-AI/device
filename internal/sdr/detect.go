@@ -187,6 +187,14 @@ func ReserveACARSSDR(available []SDRDevice) (reserved *SDRDevice, remaining []SD
 	return &dev, remaining
 }
 
+// ReserveGOESSDR picks one SDR from the available pool for dedicated GOES HRIT use.
+// Same tuner preference as ACARS (R828D > R820T2 > R820T for L-band performance).
+// Returns the reserved device and the remaining pool for the scheduler.
+func ReserveGOESSDR(available []SDRDevice) (reserved *SDRDevice, remaining []SDRDevice) {
+	// Identical selection logic to ReserveACARSSDR — both are L-band SDRs.
+	return ReserveACARSSDR(available)
+}
+
 // ProgramSerial programs a serial number onto an RTL-SDR dongle via rtl_eeprom.
 // This is a one-time operation that persists in the dongle's EEPROM.
 func ProgramSerial(deviceIndex int, serial string) error {

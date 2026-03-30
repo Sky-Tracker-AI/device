@@ -98,3 +98,27 @@ ble:
 #
 #   # Output directory for decoded satellite images (tmpfs recommended)
 #   decoder_output_dir: "/tmp/skytracker-sat"
+#
+#   # ── GOES HRIT geostationary imagery (Pro/FBO only) ───────────────────────
+#   # Requires: 60cm dish + LNA + SAW filter (1694 MHz) + dedicated RTL-SDR
+#   goes:
+#     enabled: false
+#     satellite: "GOES-18"           # "GOES-16" (East) or "GOES-18" (West)
+#     frequency_mhz: 1694.1          # HRIT downlink frequency
+#     sample_rate: 2400000
+#     tcp_port: "7656"               # rtl_tcp port (distinct from ACARS 7655)
+#     pipeline: "goes_hrit"           # SatDump pipeline ID
+#     max_local_storage_gb: 2        # Rotate decoded products after N GB
+#     products:
+#       full_disk:
+#         decode: true
+#         upload_interval: "30m"     # Upload one composite every 30 min
+#         composites: ["true_color", "ir_enhanced"]
+#       conus:
+#         decode: true
+#         upload_interval: "15m"
+#         composites: ["true_color", "ir_enhanced", "water_vapor"]
+#       mesoscale:
+#         decode: true
+#         upload_interval: "0"       # 0 = don't auto-upload
+#         composites: ["true_color"]

@@ -26,6 +26,7 @@ type OmniConfig struct {
 	SatDumpBin       string      `yaml:"satdump_bin"`
 	DecoderOutputDir string      `yaml:"decoder_output_dir"`
 	ACARS            ACARSConfig `yaml:"acars"`
+	GOES             GOESConfig  `yaml:"goes"`
 }
 
 // ACARSConfig controls the Inmarsat L-band ACARS decoder subsystem.
@@ -38,6 +39,32 @@ type ACARSConfig struct {
 	TCPPort          string  `yaml:"tcp_port"`             // rtl_tcp port (distinct from scheduler)
 	SyncIntervalMS   int     `yaml:"sync_interval_ms"`     // Platform ingest batch interval
 	Pipeline         string  `yaml:"pipeline"`             // SatDump pipeline ID
+}
+
+// GOESConfig controls the GOES HRIT geostationary weather imagery decoder.
+type GOESConfig struct {
+	Enabled           bool              `yaml:"enabled"`
+	Satellite         string            `yaml:"satellite"`            // "GOES-16" or "GOES-18"
+	FrequencyMHz      float64           `yaml:"frequency_mhz"`       // 1694.1 MHz HRIT downlink
+	SampleRate        int               `yaml:"sample_rate"`          // 2400000 (2.4 Msps)
+	TCPPort           string            `yaml:"tcp_port"`             // rtl_tcp port (distinct from ACARS)
+	Pipeline          string            `yaml:"pipeline"`             // SatDump pipeline ID
+	MaxLocalStorageGB int               `yaml:"max_local_storage_gb"` // Rotate local products after N GB
+	Products          GOESProductConfig `yaml:"products"`
+}
+
+// GOESProductConfig controls which GOES scan modes to decode and upload.
+type GOESProductConfig struct {
+	FullDisk  GOESProductEntry `yaml:"full_disk"`
+	CONUS     GOESProductEntry `yaml:"conus"`
+	Mesoscale GOESProductEntry `yaml:"mesoscale"`
+}
+
+// GOESProductEntry controls decoding and upload cadence for a single product type.
+type GOESProductEntry struct {
+	Decode         bool     `yaml:"decode"`
+	UploadInterval string   `yaml:"upload_interval"` // e.g. "30m", "15m", "0" (disabled)
+	Composites     []string `yaml:"composites"`      // e.g. ["true_color", "ir_enhanced"]
 }
 
 type StationConfig struct {
@@ -134,6 +161,32 @@ func Default() *Config {
 				TCPPort:          "7655",
 				SyncIntervalMS:   5000,
 				Pipeline:         "inmarsat_aero_6",
+			},
+			GOES: GOESConfig{
+				Enabled:           false,
+				Satellite:         "GOES-18",
+				FrequencyMHz:      1694.1,
+				SampleRate:        2400000,
+				TCPPort:           "7656",
+				Pipeline:          "goes_hrit",
+				MaxLocalStorageGB: 2,
+				Products: GOESProductConfig{
+					FullDisk: GOESProductEntry{
+						Decode:         true,
+						UploadInterval: "30m",
+						Composites:     []string{"true_color", "ir_enhanced"},
+					},
+					CONUS: GOESProductEntry{
+						Decode:         true,
+						UploadInterval: "15m",
+						Composites:     []string{"true_color", "ir_enhanced", "water_vapor"},
+					},
+					Mesoscale: GOESProductEntry{
+						Decode:         true,
+						UploadInterval: "0",
+						Composites:     []string{"true_color"},
+					},
+				},
 			},
 		},
 	}
