@@ -131,60 +131,33 @@ func (d *Decoder) OutputDir() string {
 	return d.outputDir
 }
 
-// runPipeline starts rtl_tcp + SatDump and reads stderr until exit.
+// runPipeline starts rtl_sdr piped into SatDump and reads stderr until exit.
+// Uses rtl_sdr | satdump legacy live with the rtlsdr source for direct
+// hardware access (no rtl_tcp intermediary).
 func (d *Decoder) runPipeline(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	// Kill any stale rtl_tcp on our port from a previous crash.
-	exec.Command("pkill", "-f", "rtl_tcp.*-p "+d.tcpPort).Run()
-	time.Sleep(500 * time.Millisecond)
 
 	serial := d.sdrSerial
 	if serial == "" {
 		serial = "0"
 	}
 
-	// Tune directly to the HRIT frequency. The E4000 tuner's narrow IF
-	// bandwidth cannot tolerate the 200 kHz DC offset used for R820T tuners.
-	// The DC spike at center is handled by SatDump's demodulator.
-	tcpArgs := []string{
-		"-d", serial,
-		"-f", strconv.FormatInt(d.freqHz, 10),
-		"-g", "42",
-		"-s", strconv.Itoa(d.sampleRate),
-		"-p", d.tcpPort,
-		"-T",
-	}
-
-	tcpCmd := exec.CommandContext(childCtx, "rtl_tcp", tcpArgs...)
-	tcpCmd.Stdout = nil
-	tcpCmd.Stderr = nil
-
-	log.Printf("[goes] starting rtl_tcp: %v", tcpArgs)
-	if err := tcpCmd.Start(); err != nil {
-		return fmt.Errorf("start rtl_tcp: %w", err)
-	}
-	defer func() {
-		if tcpCmd.Process != nil {
-			tcpCmd.Process.Kill()
-		}
-	}()
-
-	time.Sleep(2 * time.Second)
+	// Kill any stale rtl_tcp from a previous crash.
+	exec.Command("pkill", "-f", "rtl_tcp.*-p "+d.tcpPort).Run()
+	time.Sleep(500 * time.Millisecond)
 
 	// Ensure output directory exists.
 	os.MkdirAll(d.outputDir, 0755)
 
-	// Start SatDump GOES HRIT pipeline.
+	// Use legacy live with native rtlsdr source — no rtl_tcp intermediary.
+	// Tune directly to the HRIT frequency (no DC offset) for E4000 compatibility.
 	args := []string{
 		"legacy",
 		"live",
 		d.pipeline,
 		d.outputDir,
-		"--source", "rtltcp",
-		"--ip_address", "127.0.0.1",
-		"--port", d.tcpPort,
+		"--source", "rtlsdr",
 		"--samplerate", strconv.Itoa(d.sampleRate),
 		"--frequency", strconv.FormatInt(d.freqHz, 10),
 		"--gain", "42",
@@ -211,7 +184,7 @@ func (d *Decoder) runPipeline(ctx context.Context) error {
 	}
 	cmd.Env = env
 
-	cmd.Stdout = nil // GOES HRIT outputs files, not JSON on stdout.
+	cmd.Stdout = nil
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -219,6 +192,7 @@ func (d *Decoder) runPipeline(ctx context.Context) error {
 	}
 
 	log.Printf("[goes] starting satdump: %v", args)
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start satdump: %w", err)
 	}
