@@ -147,15 +147,20 @@ func (w *ProductWatcher) scan() {
 
 	files := append(composites, channels...)
 	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil || info.Size() < 10000 {
+			continue
+		}
+		// Wait for files to settle — SatDump writes raw channels first,
+		// then generates composites. Delay so composites land in the
+		// same batch and get prioritized over channels.
+		if time.Since(info.ModTime()) < 30*time.Second {
+			continue
+		}
 		if w.seen[path] {
 			continue
 		}
 		w.seen[path] = true
-
-		info, err := os.Stat(path)
-		if err != nil || info.Size() < 10000 {
-			continue // skip empty or near-empty images (black frames, corrupt)
-		}
 
 		product := ProductInfo{
 			Path:          path,
