@@ -153,8 +153,8 @@ func (w *ProductWatcher) scan() {
 		w.seen[path] = true
 
 		info, err := os.Stat(path)
-		if err != nil || info.Size() == 0 {
-			continue
+		if err != nil || info.Size() < 10000 {
+			continue // skip empty or near-empty images (black frames, corrupt)
 		}
 
 		product := ProductInfo{
