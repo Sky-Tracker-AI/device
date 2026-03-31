@@ -181,6 +181,11 @@ func (w *ProductWatcher) scan() {
 // shouldUpload checks whether a product is eligible for upload based on
 // cadence limits and configured composite types.
 func (w *ProductWatcher) shouldUpload(p ProductInfo) bool {
+	// Only upload named composites (abi_*), not raw channel files.
+	if strings.HasPrefix(p.CompositeName, "channel_") {
+		return false
+	}
+
 	interval, ok := w.cadence[p.ProductType]
 	if !ok {
 		return false // product type not configured for upload
