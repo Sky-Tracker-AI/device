@@ -146,7 +146,7 @@ func (w *ProductWatcher) scan() {
 		w.seen[path] = true
 
 		info, err := os.Stat(path)
-		if err != nil {
+		if err != nil || info.Size() == 0 {
 			continue
 		}
 
