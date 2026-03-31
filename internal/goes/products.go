@@ -275,9 +275,17 @@ func classifyComposite(path string) string {
 	base := filepath.Base(path)
 	name := strings.TrimSuffix(base, filepath.Ext(base))
 
-	// Named composites: strip "abi_" prefix and lowercase for platform compatibility.
+	// Named composites: strip "abi_" prefix, lowercase, and remove any
+	// characters outside a-z 0-9 _ to match platform validation.
 	if strings.HasPrefix(name, "abi_") {
-		return strings.ToLower(strings.TrimPrefix(name, "abi_"))
+		comp := strings.ToLower(strings.TrimPrefix(name, "abi_"))
+		var clean []byte
+		for _, c := range []byte(comp) {
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+				clean = append(clean, c)
+			}
+		}
+		return string(clean)
 	}
 
 	// Raw channel files: "G19_13_..." → "channel_13"
