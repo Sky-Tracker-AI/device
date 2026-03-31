@@ -143,11 +143,9 @@ func (d *Decoder) runPipeline(ctx context.Context) error {
 		serial = "0"
 	}
 
-	// Kill any stale rtl_tcp from a previous crash.
-	exec.Command("pkill", "-f", "rtl_tcp.*-p "+d.tcpPort).Run()
-	time.Sleep(500 * time.Millisecond)
-
-	// Ensure output directory exists.
+	// Clean output directory on each pipeline start so SatDump doesn't
+	// choke on stale/corrupt data from a previous crashed run.
+	os.RemoveAll(d.outputDir)
 	os.MkdirAll(d.outputDir, 0755)
 
 	// Use legacy live with native rtlsdr source — no rtl_tcp intermediary.
