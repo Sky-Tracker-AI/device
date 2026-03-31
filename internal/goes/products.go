@@ -128,17 +128,24 @@ func (w *ProductWatcher) LatestProducts() map[ProductType]ProductInfo {
 func (w *ProductWatcher) scan() {
 	imagesDir := filepath.Join(w.outputDir, "IMAGES")
 
-	var files []string
+	var composites, channels []string
 	filepath.WalkDir(imagesDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".png") {
-			files = append(files, path)
+			// Sort named composites (abi_*) before raw channels (G19_*)
+			// so composites claim the cadence window first.
+			if strings.HasPrefix(filepath.Base(path), "abi_") {
+				composites = append(composites, path)
+			} else {
+				channels = append(channels, path)
+			}
 		}
 		return nil
 	})
 
+	files := append(composites, channels...)
 	for _, path := range files {
 		if w.seen[path] {
 			continue
