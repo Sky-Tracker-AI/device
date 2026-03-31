@@ -273,6 +273,13 @@ func classifyComposite(path string) string {
 		return strings.TrimPrefix(name, "abi_")
 	}
 
-	// Raw channel files (G19_13_...) — return empty to skip upload.
+	// Raw channel files: "G19_13_..." → "channel_13"
+	if len(name) > 3 && name[0] == 'G' {
+		parts := strings.SplitN(name, "_", 3)
+		if len(parts) >= 2 {
+			return "channel_" + parts[1]
+		}
+	}
+
 	return ""
 }
