@@ -255,6 +255,43 @@ libinmarsat_support.so libanalog_support.so libgoes_support.so libxrit_support.s
     fi
 }
 
+# ── Install dump978-fa (UAT 978 MHz decoder) ────────────────────────────────
+
+install_dump978() {
+    if command -v dump978-fa &>/dev/null; then
+        success "dump978-fa already installed"
+        return
+    fi
+
+    info "Installing dump978-fa (UAT decoder)..."
+
+    apt-get install -y -qq \
+        libsoapysdr-dev soapysdr-module-rtlsdr \
+        libboost-system-dev libboost-program-options-dev \
+        libboost-filesystem-dev libboost-regex-dev \
+        build-essential git >/dev/null 2>&1 || {
+        warn "Could not install dump978-fa build dependencies — UAT decoding will be unavailable"
+        return
+    }
+
+    local build_dir="/tmp/dump978-build"
+    rm -rf "$build_dir"
+    git clone --depth 1 https://github.com/flightaware/dump978.git "$build_dir" >/dev/null 2>&1 || {
+        warn "Failed to clone dump978 — UAT decoding will be unavailable"
+        return
+    }
+
+    if make -C "$build_dir" dump978-fa -j"$(nproc)" >/dev/null 2>&1; then
+        cp "$build_dir/dump978-fa" /usr/local/bin/
+        chmod +x /usr/local/bin/dump978-fa
+        success "dump978-fa installed"
+    else
+        warn "dump978-fa build failed — UAT decoding will be unavailable"
+    fi
+
+    rm -rf "$build_dir"
+}
+
 # ── Download agent binary ────────────────────────────────────────────────────
 
 download_agent() {
@@ -545,6 +582,7 @@ main() {
     install_gps
     install_bluetooth
     install_satdump
+    install_dump978
     download_agent
     download_ui
     download_enrichment

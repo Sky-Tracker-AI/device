@@ -97,7 +97,7 @@ func (d *SatDumpDecoder) Start(ctx context.Context, handle sdr.SDRHandle, freqHz
 		"--source_id", serial,
 		"--samplerate", strconv.Itoa(d.pipeline.SampleRate),
 		"--frequency", strconv.FormatInt(freqHz, 10),
-		"--gain", "20",
+		"--gain", "30",
 		"--bias",
 		"--timeout", "1200",
 	}
