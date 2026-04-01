@@ -128,16 +128,23 @@ func (w *ProductWatcher) LatestProducts() map[ProductType]ProductInfo {
 func (w *ProductWatcher) scan() {
 	imagesDir := filepath.Join(w.outputDir, "IMAGES")
 
-	var composites, channels []string
+	var heroComposites, otherComposites, channels []string
 	filepath.WalkDir(imagesDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".png") {
-			// Sort named composites (abi_*) before raw channels (G19_*)
-			// so composites claim the cadence window first.
-			if strings.HasPrefix(filepath.Base(path), "abi_") {
-				composites = append(composites, path)
+			base := filepath.Base(path)
+			lower := strings.ToLower(base)
+			if strings.HasPrefix(base, "abi_") {
+				// Prioritize the composites people actually want to see.
+				if strings.Contains(lower, "false_color") ||
+					strings.Contains(lower, "cloud_convection") ||
+					strings.Contains(lower, "cloud_top_ir") {
+					heroComposites = append(heroComposites, path)
+				} else {
+					otherComposites = append(otherComposites, path)
+				}
 			} else {
 				channels = append(channels, path)
 			}
@@ -145,7 +152,8 @@ func (w *ProductWatcher) scan() {
 		return nil
 	})
 
-	files := append(composites, channels...)
+	files := append(heroComposites, otherComposites...)
+	files = append(files, channels...)
 	for _, path := range files {
 		info, err := os.Stat(path)
 		if err != nil || info.Size() < 10000 {
