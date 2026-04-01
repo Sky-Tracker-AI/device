@@ -118,9 +118,12 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 		serial = "0"
 	}
 
+	// Pass the serial via the --sdr device string rather than --sdr-serial.
+	// SoapySDR's --sdr-serial path enumerates all devices (failing on busy
+	// ones), while driver=rtlsdr,serial=X opens the device directly.
+	sdrArg := fmt.Sprintf("driver=rtlsdr,serial=%s", serial)
 	args := []string{
-		"--sdr",
-		"--sdr-serial", serial,
+		"--sdr", sdrArg,
 		"--sdr-gain", strconv.Itoa(d.gain),
 		"--json-stdout",
 	}
