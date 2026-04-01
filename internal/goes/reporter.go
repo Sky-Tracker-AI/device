@@ -14,6 +14,7 @@ import (
 const (
 	NoradGOES16 = 41866
 	NoradGOES18 = 51850
+	NoradGOES19 = 61861
 )
 
 // Reporter uploads GOES HRIT imagery to the platform.
@@ -51,8 +52,11 @@ func (r *Reporter) Upload(ctx context.Context, product ProductInfo) {
 	width, height := readPNGDimensions(product.Path)
 
 	noradID := NoradGOES18
-	if r.satellite == "GOES-16" {
+	switch r.satellite {
+	case "GOES-16":
 		noradID = NoradGOES16
+	case "GOES-19":
+		noradID = NoradGOES19
 	}
 
 	upload := platform.WeatherImageUpload{
