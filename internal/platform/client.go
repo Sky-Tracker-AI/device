@@ -99,6 +99,7 @@ type IngestSighting struct {
 	Distance  float64 `json:"distance"`
 	VertRate  int     `json:"vert_rate"`
 	Squawk    string  `json:"squawk"`
+	Source    string  `json:"source,omitempty"` // "1090es" or "uat"
 }
 
 // IngestRequest is the payload for the batch ingest endpoint.
@@ -198,6 +199,13 @@ type HealthRequest struct {
 	GOESFramesDecoded int     `json:"goes_frames_decoded,omitempty"`
 	GOESDecoderState  string  `json:"goes_decoder_state,omitempty"` // "running", "stopped", "restarting"
 	GOESImages24h     int     `json:"goes_images_24h,omitempty"`
+
+	// UAT 978 MHz extensions (omitted when UAT is not enabled).
+	UATEnabled       bool    `json:"uat_enabled,omitempty"`
+	UATAircraftCount int     `json:"uat_aircraft_count,omitempty"`
+	UATFramesDecoded int     `json:"uat_frames_decoded,omitempty"`
+	UATFrameRate     float64 `json:"uat_frame_rate,omitempty"`
+	UATDecoderState  string  `json:"uat_decoder_state,omitempty"` // "running", "stopped", "restarting"
 }
 
 // UpcomingPass is a device-predicted satellite pass sent in the health report.

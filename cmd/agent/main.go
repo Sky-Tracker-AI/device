@@ -33,6 +33,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/sdr"
 	"github.com/skytracker/skytracker-device/internal/server"
 	"github.com/skytracker/skytracker-device/internal/state"
+	"github.com/skytracker/skytracker-device/internal/uat"
 	"github.com/skytracker/skytracker-device/internal/updater"
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
@@ -397,6 +398,9 @@ func main() {
 	// GOES HRIT subsystem (geostationary weather, dedicated SDR, always-on).
 	var goesDecoder *goes.Decoder
 
+	// UAT 978 MHz subsystem (dedicated SDR, always-on).
+	var uatDecoder uatDecoderIface
+
 	// Build decoder factory: SatDump if available, NoopDecoder otherwise.
 	var decoderFn func(noradID int, satName string) scheduler.Decoder
 	satdumpBin, satdumpErr := exec.LookPath(cfg.Omni.SatDumpBin)
@@ -435,6 +439,14 @@ func main() {
 				acarsParser = acars.NewParser(mockACARS.Messages(), aesDB)
 				go acarsParser.Run(ctx)
 				log.Printf("[acars] mock decoder started (entries=%d)", aesDB.Count())
+			}
+
+			// UAT mock decoder.
+			if cfg.Omni.UAT.Enabled {
+				md := uat.NewMockUATDecoder()
+				go md.Run(ctx)
+				uatDecoder = md
+				log.Printf("[uat] mock UAT decoder started")
 			}
 
 			// Start satellite service (real TLE fetch even in mock mode).
@@ -516,6 +528,20 @@ func main() {
 				}
 			}
 
+			// Reserve a dedicated SDR for UAT before the scheduler gets the pool.
+			if cfg.Omni.UAT.Enabled && len(omniSDRs) > 0 {
+				reserved, remaining := sdr.ReserveUATSDR(omniSDRs)
+				if reserved != nil {
+					omniSDRs = remaining
+					d := uat.NewUATDecoder(cfg.Omni.UAT, reserved.SerialNumber)
+					go d.Run(ctx)
+					uatDecoder = d
+					log.Printf("[uat] UAT decoder started on SDR serial=%s tuner=%s", reserved.SerialNumber, reserved.TunerType)
+				} else {
+					log.Printf("[uat] no SDR available for UAT decoder")
+				}
+			}
+
 			// Start satellite service.
 			satService = sat.NewService(cfg.Omni.MinElevation, cfg.Omni.TLERefreshHrs)
 			go satService.Start(ctx)
@@ -556,9 +582,51 @@ func main() {
 		go runACARSSync(ctx, platHolder, acarsParser, cfg.Omni.ACARS.SyncIntervalMS)
 	}
 
+	// --- UAT Aircraft Consumer (background) ---
+	if uatDecoder != nil {
+		go func() {
+			var aircraft []uat.UATAircraft
+			ticker := time.NewTicker(time.Duration(cfg.Advanced.PollIntervalMS) * time.Millisecond)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case frame := <-uatDecoder.Frames():
+					if a, ok := uat.ParseFrame(frame); ok {
+						// Update or add aircraft by hex.
+						found := false
+						for i, existing := range aircraft {
+							if existing.Address == a.Address {
+								aircraft[i] = a
+								found = true
+								break
+							}
+						}
+						if !found {
+							aircraft = append(aircraft, a)
+						}
+					}
+				case <-ticker.C:
+					// Remove stale aircraft (not seen in 60s).
+					now := float64(time.Now().Unix())
+					fresh := aircraft[:0]
+					for _, a := range aircraft {
+						if now-a.Timestamp < 60 {
+							fresh = append(fresh, a)
+						}
+					}
+					aircraft = fresh
+					srv.SetUATAircraft(aircraft)
+				}
+			}
+		}()
+	}
+
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder, uatDecoder)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -722,7 +790,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder, uatDecoder uatDecoderIface) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -748,11 +816,12 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			aircraft := ap.Aircraft()
 			pos := gps.Position()
 
-			if len(aircraft) == 0 {
+			uatSnap := srv.GetUATAircraft()
+			if len(aircraft) == 0 && len(uatSnap) == 0 {
 				continue
 			}
 
-			sightings := make([]platform.IngestSighting, 0, len(aircraft))
+			sightings := make([]platform.IngestSighting, 0, len(aircraft)+len(uatSnap))
 			for _, a := range aircraft {
 				if !a.HasPosition() {
 					continue
@@ -783,6 +852,50 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 					s.Callsign = a.Callsign()
 					s.Type = typeCode
 					s.Squawk = a.Squawk
+				}
+				sightings = append(sightings, s)
+			}
+
+			// Add UAT aircraft sightings.
+			// Track 1090 hexes to avoid duplicates.
+			adsbHexes := make(map[string]bool, len(aircraft))
+			for _, a := range aircraft {
+				adsbHexes[strings.ToUpper(a.Hex)] = true
+			}
+			for _, ua := range uatSnap {
+				hex := strings.ToUpper(ua.Address)
+				if adsbHexes[hex] {
+					continue // 1090 takes priority
+				}
+				if ua.Lat == 0 && ua.Lon == 0 {
+					continue
+				}
+				dist := geo.HaversineNM(pos.Lat, pos.Lon, ua.Lat, ua.Lon)
+				typeCode := ""
+				isLADD := false
+				if enricher != nil {
+					if info := enricher.LookupAircraft(hex); info != nil {
+						typeCode = info.TypeCode
+						isLADD = info.LADD
+					}
+				}
+				callsign := strings.TrimSpace(ua.Flight)
+				s := platform.IngestSighting{
+					Timestamp: time.Now().UnixMilli(),
+					ICAOHex:   hex,
+					Altitude:  ua.AltBaro,
+					Speed:     ua.GS,
+					Heading:   ua.Track,
+					Lat:       ua.Lat,
+					Lon:       ua.Lon,
+					Distance:  dist,
+					VertRate:  ua.VertRate,
+					Source:    "uat",
+				}
+				if !isLADD {
+					s.Callsign = callsign
+					s.Type = typeCode
+					s.Squawk = ua.Squawk
 				}
 				sightings = append(sightings, s)
 			}
@@ -939,6 +1052,20 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				}
 			}
 
+			// UAT 978 MHz health fields.
+			if uatDecoder != nil {
+				uatStats := uatDecoder.Stats()
+				healthReq.UATEnabled = true
+				healthReq.UATAircraftCount = len(srv.GetUATAircraft())
+				healthReq.UATFramesDecoded = uatStats.FramesDecoded
+				healthReq.UATFrameRate = uatStats.FrameRate
+				if uatDecoder.IsRunning() {
+					healthReq.UATDecoderState = "running"
+				} else {
+					healthReq.UATDecoderState = "restarting"
+				}
+			}
+
 			// Signal types capability declaration.
 			var signalTypes []string
 			if omniMode == sdr.ModeADSBOmni || omniMode == sdr.ModeADSBOnly {
@@ -952,6 +1079,9 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			}
 			if goesDecoder != nil {
 				signalTypes = append(signalTypes, "goes")
+			}
+			if uatDecoder != nil {
+				signalTypes = append(signalTypes, "uat")
 			}
 			if len(signalTypes) > 0 {
 				healthReq.SignalTypes = signalTypes
@@ -991,6 +1121,13 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 type acarsDecoderIface interface {
 	Messages() <-chan acars.ACARSRawMessage
 	Stats() acars.DecoderStats
+	IsRunning() bool
+}
+
+// uatDecoderIface abstracts over uat.UATDecoder and uat.MockUATDecoder.
+type uatDecoderIface interface {
+	Frames() <-chan uat.RawFrame
+	Stats() uat.DecoderStats
 	IsRunning() bool
 }
 

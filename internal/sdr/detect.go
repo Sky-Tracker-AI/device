@@ -195,6 +195,45 @@ func ReserveGOESSDR(available []SDRDevice) (reserved *SDRDevice, remaining []SDR
 	return ReserveACARSSDR(available)
 }
 
+// ReserveUATSDR picks one SDR from the available pool for dedicated 978 MHz UAT use.
+// Prefers R820T2/R820T tuners (best VHF/UHF performance), then R828D.
+// Returns the reserved device and the remaining pool.
+func ReserveUATSDR(available []SDRDevice) (reserved *SDRDevice, remaining []SDRDevice) {
+	if len(available) == 0 {
+		return nil, nil
+	}
+
+	bestIdx := -1
+	bestScore := -1
+	for i, dev := range available {
+		score := 0
+		switch dev.TunerType {
+		case "R820T2":
+			score = 3
+		case "R820T":
+			score = 2
+		case "R828D":
+			score = 1
+		default:
+			score = 1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+
+	if bestIdx < 0 {
+		return nil, available
+	}
+
+	dev := available[bestIdx]
+	remaining = make([]SDRDevice, 0, len(available)-1)
+	remaining = append(remaining, available[:bestIdx]...)
+	remaining = append(remaining, available[bestIdx+1:]...)
+	return &dev, remaining
+}
+
 // ProgramSerial programs a serial number onto an RTL-SDR dongle via rtl_eeprom.
 // This is a one-time operation that persists in the dongle's EEPROM.
 func ProgramSerial(deviceIndex int, serial string) error {

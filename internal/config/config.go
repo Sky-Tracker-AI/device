@@ -27,6 +27,7 @@ type OmniConfig struct {
 	DecoderOutputDir string      `yaml:"decoder_output_dir"`
 	ACARS            ACARSConfig `yaml:"acars"`
 	GOES             GOESConfig  `yaml:"goes"`
+	UAT              UATConfig   `yaml:"uat"`
 }
 
 // ACARSConfig controls the Inmarsat L-band ACARS decoder subsystem.
@@ -65,6 +66,15 @@ type GOESProductEntry struct {
 	Decode         bool     `yaml:"decode"`
 	UploadInterval string   `yaml:"upload_interval"` // e.g. "30m", "15m", "0" (disabled)
 	Composites     []string `yaml:"composites"`      // e.g. ["true_color", "ir_enhanced"]
+}
+
+// UATConfig controls the 978 MHz UAT decoder subsystem.
+type UATConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	Dump978Bin     string `yaml:"dump978_bin"`      // Path to dump978-fa binary
+	SDRSerial      string `yaml:"sdr_serial"`       // Specific SDR serial, or auto-detect
+	Gain           int    `yaml:"gain"`             // SDR gain (0-49)
+	SyncIntervalMS int    `yaml:"sync_interval_ms"` // Platform ingest batch interval
 }
 
 type StationConfig struct {
@@ -187,6 +197,12 @@ func Default() *Config {
 						Composites:     []string{"true_color"},
 					},
 				},
+			},
+			UAT: UATConfig{
+				Enabled:        false,
+				Dump978Bin:     "dump978-fa",
+				Gain:           48,
+				SyncIntervalMS: 10000,
 			},
 		},
 	}

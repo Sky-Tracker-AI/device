@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/skytracker/skytracker-device/internal/adsb"
 	"github.com/skytracker/skytracker-device/internal/geo"
+	"github.com/skytracker/skytracker-device/internal/uat"
 )
 
 // Enricher is the interface for looking up aircraft type and airline info.
@@ -81,6 +83,7 @@ type EnrichedAircraft struct {
 	Bearing      float64  `json:"bearing"`
 	RarityScore  *int     `json:"rarity_score"`
 	Military     bool     `json:"military,omitempty"`
+	Source       string   `json:"source,omitempty"` // "1090es" or "uat"
 }
 
 // WSMessage is the top-level WebSocket message.
@@ -142,6 +145,9 @@ type Server struct {
 
 	mu      sync.Mutex
 	clients map[*wsClient]bool
+
+	uatAircraft []uat.UATAircraft
+	uatMu       sync.RWMutex
 }
 
 // wsClient wraps a WebSocket connection with a per-connection write mutex.
@@ -184,6 +190,22 @@ func (s *Server) SetStationName(name string) {
 	s.mu.Lock()
 	s.stationName = name
 	s.mu.Unlock()
+}
+
+// SetUATAircraft updates the current UAT aircraft snapshot.
+func (s *Server) SetUATAircraft(aircraft []uat.UATAircraft) {
+	s.uatMu.Lock()
+	defer s.uatMu.Unlock()
+	s.uatAircraft = aircraft
+}
+
+// GetUATAircraft returns a copy of the current UAT aircraft snapshot.
+func (s *Server) GetUATAircraft() []uat.UATAircraft {
+	s.uatMu.RLock()
+	defer s.uatMu.RUnlock()
+	snapshot := make([]uat.UATAircraft, len(s.uatAircraft))
+	copy(snapshot, s.uatAircraft)
+	return snapshot
 }
 
 // Run starts the HTTP server and WebSocket broadcaster. Blocks until ctx
@@ -393,6 +415,75 @@ func (s *Server) sendUpdate() {
 				ea.Military = info.Military
 				if !info.LADD {
 					// LADD aircraft: show on radar but suppress identifying info.
+					ea.Registration = info.Registration
+					ea.Operator = info.Operator
+				}
+			}
+			if info := s.enricher.LookupAirline(callsign); info != nil {
+				ea.Airline = info.Name
+			}
+		}
+
+		if s.routes != nil && callsign != "" {
+			if route := s.routes.Get(callsign); route != nil {
+				ea.Origin = route.Origin
+				ea.Destination = route.Destination
+			}
+		}
+
+		enriched = append(enriched, ea)
+	}
+
+	// Merge UAT aircraft (978 MHz) into the broadcast.
+	s.uatMu.RLock()
+	uatSnapshot := make([]uat.UATAircraft, len(s.uatAircraft))
+	copy(uatSnapshot, s.uatAircraft)
+	s.uatMu.RUnlock()
+
+	// Track which ICAO hexes we already have from 1090.
+	seen := make(map[string]bool, len(enriched))
+	for _, a := range enriched {
+		seen[a.ICAOHex] = true
+	}
+
+	for _, ua := range uatSnapshot {
+		hex := strings.ToUpper(ua.Address)
+		if seen[hex] {
+			continue // 1090 takes priority
+		}
+
+		if ua.Lat == 0 && ua.Lon == 0 {
+			continue
+		}
+
+		distNM := geo.HaversineNM(pos.Lat, pos.Lon, ua.Lat, ua.Lon)
+		if distNM > float64(s.maxRangeNM) {
+			continue
+		}
+
+		bearing := geo.Bearing(pos.Lat, pos.Lon, ua.Lat, ua.Lon)
+		callsign := strings.TrimSpace(ua.Flight)
+
+		ea := EnrichedAircraft{
+			ICAOHex:    hex,
+			Callsign:   callsign,
+			Altitude:   ua.AltBaro,
+			Speed:      ua.GS,
+			Heading:    ua.Track,
+			Lat:        ua.Lat,
+			Lon:        ua.Lon,
+			DistanceNM: round2(distNM),
+			Bearing:    round1(bearing),
+			Source:     "uat",
+		}
+
+		// Enrich with type info (same as 1090 aircraft).
+		if s.enricher != nil {
+			if info := s.enricher.LookupAircraft(hex); info != nil {
+				ea.Type = info.TypeCode
+				ea.TypeName = info.TypeName
+				ea.Military = info.Military
+				if !info.LADD {
 					ea.Registration = info.Registration
 					ea.Operator = info.Operator
 				}
