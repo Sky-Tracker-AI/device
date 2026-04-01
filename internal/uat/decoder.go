@@ -23,6 +23,7 @@ type UATDecoder struct {
 	dump978Bin string
 	sdrSerial  string
 	gain       int
+	biasT      bool
 
 	mu      sync.Mutex
 	running bool
@@ -41,6 +42,7 @@ func NewUATDecoder(cfg config.UATConfig, sdrSerial string) *UATDecoder {
 		dump978Bin: bin,
 		sdrSerial:  sdrSerial,
 		gain:       cfg.Gain,
+		biasT:      cfg.BiasT,
 		frames:     make(chan RawFrame, 1000),
 	}
 }
@@ -121,6 +123,9 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 		"--sdr-serial", serial,
 		"--sdr-gain", strconv.Itoa(d.gain),
 		"--json-stdout",
+	}
+	if d.biasT {
+		args = append(args, "--sdr-device-settings", "biastee=true")
 	}
 
 	cmd := exec.CommandContext(ctx, d.dump978Bin, args...)

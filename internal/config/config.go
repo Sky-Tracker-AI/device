@@ -74,6 +74,7 @@ type UATConfig struct {
 	Dump978Bin     string `yaml:"dump978_bin"`      // Path to dump978-fa binary
 	SDRSerial      string `yaml:"sdr_serial"`       // Specific SDR serial, or auto-detect
 	Gain           int    `yaml:"gain"`             // SDR gain (0-49)
+	BiasT          bool   `yaml:"bias_t"`           // Enable bias-T to power inline LNA
 	SyncIntervalMS int    `yaml:"sync_interval_ms"` // Platform ingest batch interval
 }
 
