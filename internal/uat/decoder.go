@@ -175,27 +175,13 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 }
 
 // readStdout reads dump978-fa JSON output line by line. Each line is a JSON
-// object. We filter to ADS-B frames (those with an "address" field and
-// optionally a "type" field starting with "adsb_").
+// object representing either an ADS-B aircraft frame or a FIS-B uplink frame.
+// Frame classification happens downstream via ClassifyFrame.
 func (d *UATDecoder) readStdout(scanner *bufio.Scanner) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || line[0] != '{' {
 			continue
-		}
-
-		// Quick filter: must contain "address" to be an aircraft frame.
-		if !strings.Contains(line, `"address"`) {
-			continue
-		}
-
-		// Exclude non-ADS-B frames: if a "type" field is present, it must
-		// start with "adsb_" (skip TIS-B trackfile, etc. for now).
-		if idx := strings.Index(line, `"type":"`); idx >= 0 {
-			after := line[idx+len(`"type":"`):]
-			if !strings.HasPrefix(after, "adsb_") {
-				continue
-			}
 		}
 
 		d.mu.Lock()
@@ -212,5 +198,17 @@ func (d *UATDecoder) readStdout(scanner *bufio.Scanner) {
 		default:
 			log.Printf("[uat] frame channel full, dropping frame")
 		}
+	}
+}
+
+// IncrementFISBStats updates FIS-B product statistics by the given count.
+func (d *UATDecoder) IncrementFISBStats(count int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stats.FISBProductsDecoded += count
+	d.stats.FISBLastProductAt = time.Now().UnixMilli()
+	elapsed := time.Since(d.started).Minutes()
+	if elapsed > 0 {
+		d.stats.FISBProductRate = float64(d.stats.FISBProductsDecoded) / elapsed
 	}
 }

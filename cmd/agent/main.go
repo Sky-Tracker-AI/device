@@ -38,7 +38,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.8.2"
+const version = "0.9.0"
 
 func main() {
 	var (
@@ -582,8 +582,11 @@ func main() {
 		go runACARSSync(ctx, platHolder, acarsParser, cfg.Omni.ACARS.SyncIntervalMS)
 	}
 
-	// --- UAT Aircraft Consumer (background) ---
+	// --- UAT Aircraft & FIS-B Consumer (background) ---
+	var fisbChan chan uat.FISBProduct
 	if uatDecoder != nil {
+		fisbChan = make(chan uat.FISBProduct, 500)
+
 		go func() {
 			var aircraft []uat.UATAircraft
 			ticker := time.NewTicker(time.Duration(cfg.Advanced.PollIntervalMS) * time.Millisecond)
@@ -594,18 +597,41 @@ func main() {
 				case <-ctx.Done():
 					return
 				case frame := <-uatDecoder.Frames():
-					if a, ok := uat.ParseFrame(frame); ok {
-						// Update or add aircraft by hex.
-						found := false
-						for i, existing := range aircraft {
-							if existing.Address == a.Address {
-								aircraft[i] = a
-								found = true
-								break
+					frameType := uat.ClassifyFrame(frame)
+					switch frameType {
+					case "adsb":
+						if a, ok := uat.ParseFrame(frame); ok {
+							// Update or add aircraft by hex.
+							found := false
+							for i, existing := range aircraft {
+								if existing.Address == a.Address {
+									aircraft[i] = a
+									found = true
+									break
+								}
+							}
+							if !found {
+								aircraft = append(aircraft, a)
 							}
 						}
-						if !found {
-							aircraft = append(aircraft, a)
+					case "uplink":
+						if cfg.Omni.UAT.FISB.Enabled {
+							products, _, err := uat.ParseUplinkProducts(frame)
+							if err != nil {
+								log.Printf("[uat] uplink parse error: %v", err)
+								continue
+							}
+							for _, p := range products {
+								select {
+								case fisbChan <- p:
+								default:
+									log.Printf("[uat] fisb channel full, dropping product")
+								}
+							}
+							// Update FIS-B stats on the real decoder.
+							if d, ok := uatDecoder.(*uat.UATDecoder); ok {
+								d.IncrementFISBStats(len(products))
+							}
 						}
 					}
 				case <-ticker.C:
@@ -622,6 +648,11 @@ func main() {
 				}
 			}
 		}()
+
+		// FIS-B sync goroutine.
+		if cfg.Omni.UAT.FISB.Enabled && !*mockMode && platHolder.IsConfigured() {
+			go runFISBSync(ctx, platHolder, fisbChan, cfg.Omni.UAT.SyncIntervalMS)
+		}
 	}
 
 	// --- Platform Sync (background) ---
@@ -1059,6 +1090,8 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				healthReq.UATAircraftCount = len(srv.GetUATAircraft())
 				healthReq.UATFramesDecoded = uatStats.FramesDecoded
 				healthReq.UATFrameRate = uatStats.FrameRate
+				healthReq.FISBProductsDecoded = uatStats.FISBProductsDecoded
+				healthReq.FISBProductRate = uatStats.FISBProductRate
 				if uatDecoder.IsRunning() {
 					healthReq.UATDecoderState = "running"
 				} else {
@@ -1186,6 +1219,62 @@ func runACARSSync(ctx context.Context, holder *platformClientHolder, parser *aca
 			}
 			if err := client.IngestACARSMessages(ctx, toSend); err != nil {
 				log.Printf("[acars] ingest failed (%d msgs): %v", len(toSend), err)
+			}
+		}
+	}
+}
+
+// runFISBSync batches FIS-B weather products and sends them to the platform.
+func runFISBSync(ctx context.Context, holder *platformClientHolder, fisbChan <-chan uat.FISBProduct, intervalMS int) {
+	ticker := time.NewTicker(time.Duration(intervalMS) * time.Millisecond)
+	defer ticker.Stop()
+
+	var batch []platform.FISBIngestProduct
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case p := <-fisbChan:
+			ingest := platform.FISBIngestProduct{
+				Timestamp:      p.Timestamp,
+				ProductID:      p.ProductID,
+				ProductName:    p.ProductName,
+				ReportID:       p.ReportID,
+				AirportICAO:    p.AirportICAO,
+				RawText:        p.RawText,
+				Lat:            p.Lat,
+				Lon:            p.Lon,
+				AltitudeLow:    p.AltitudeLow,
+				AltitudeHigh:   p.AltitudeHigh,
+				ValidFrom:      p.ValidFrom,
+				ValidUntil:     p.ValidUntil,
+				SiteID:         p.SiteID,
+				Severity:       p.Severity,
+				FlightCategory: p.FlightCategory,
+			}
+			if len(p.GeoPolygon) > 0 {
+				poly := make([]platform.LatLon, len(p.GeoPolygon))
+				for j, ll := range p.GeoPolygon {
+					poly[j] = platform.LatLon{Lat: ll.Lat, Lon: ll.Lon}
+				}
+				ingest.GeoPolygon = poly
+			}
+			batch = append(batch, ingest)
+		case <-ticker.C:
+			if len(batch) == 0 {
+				continue
+			}
+			toSend := batch
+			batch = nil
+
+			client := holder.Get()
+			if client == nil {
+				continue
+			}
+			log.Printf("[uat] syncing %d FIS-B products to platform", len(toSend))
+			if err := client.IngestFISBProducts(ctx, toSend); err != nil {
+				log.Printf("[uat] fisb sync error: %v", err)
 			}
 		}
 	}

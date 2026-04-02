@@ -70,12 +70,19 @@ type GOESProductEntry struct {
 
 // UATConfig controls the 978 MHz UAT decoder subsystem.
 type UATConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	Dump978Bin     string `yaml:"dump978_bin"`      // Path to dump978-fa binary
-	SDRSerial      string `yaml:"sdr_serial"`       // Specific SDR serial, or auto-detect
-	Gain           int    `yaml:"gain"`             // SDR gain (0-49)
-	BiasT          bool   `yaml:"bias_t"`           // Enable bias-T to power inline LNA
-	SyncIntervalMS int    `yaml:"sync_interval_ms"` // Platform ingest batch interval
+	Enabled        bool       `yaml:"enabled"`
+	Dump978Bin     string     `yaml:"dump978_bin"`      // Path to dump978-fa binary
+	SDRSerial      string     `yaml:"sdr_serial"`       // Specific SDR serial, or auto-detect
+	Gain           int        `yaml:"gain"`             // SDR gain (0-49)
+	BiasT          bool       `yaml:"bias_t"`           // Enable bias-T to power inline LNA
+	SyncIntervalMS int        `yaml:"sync_interval_ms"` // Platform ingest batch interval
+	FISB           FISBConfig `yaml:"fisb"`
+}
+
+// FISBConfig controls FIS-B weather product decoding from UAT uplink frames.
+type FISBConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	TextProducts bool `yaml:"text_products"`
 }
 
 type StationConfig struct {
@@ -204,6 +211,7 @@ func Default() *Config {
 				Dump978Bin:     "dump978-fa",
 				Gain:           48,
 				SyncIntervalMS: 10000,
+				FISB:           FISBConfig{Enabled: true, TextProducts: true},
 			},
 		},
 	}

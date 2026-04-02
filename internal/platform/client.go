@@ -206,6 +206,10 @@ type HealthRequest struct {
 	UATFramesDecoded int     `json:"uat_frames_decoded,omitempty"`
 	UATFrameRate     float64 `json:"uat_frame_rate,omitempty"`
 	UATDecoderState  string  `json:"uat_decoder_state,omitempty"` // "running", "stopped", "restarting"
+
+	// FIS-B weather product extensions (omitted when FIS-B is not enabled).
+	FISBProductsDecoded int     `json:"fisb_products_decoded,omitempty"`
+	FISBProductRate     float64 `json:"fisb_product_rate,omitempty"`
 }
 
 // UpcomingPass is a device-predicted satellite pass sent in the health report.
@@ -525,6 +529,73 @@ func (c *Client) IngestACARSMessages(ctx context.Context, msgs []ACARSIngestMess
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("ingest acars: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// LatLon is a geographic coordinate pair.
+type LatLon struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+}
+
+// FISBIngestProduct is a FIS-B weather product for platform ingest.
+type FISBIngestProduct struct {
+	Timestamp      int64    `json:"timestamp"`
+	ProductID      int      `json:"product_id"`
+	ProductName    string   `json:"product_name"`
+	ReportID       string   `json:"report_id,omitempty"`
+	AirportICAO    string   `json:"airport_icao,omitempty"`
+	RawText        string   `json:"raw_text"`
+	Lat            float64  `json:"lat,omitempty"`
+	Lon            float64  `json:"lon,omitempty"`
+	GeoPolygon     []LatLon `json:"geo_polygon,omitempty"`
+	AltitudeLow    int      `json:"altitude_low,omitempty"`
+	AltitudeHigh   int      `json:"altitude_high,omitempty"`
+	ValidFrom      int64    `json:"valid_from,omitempty"`
+	ValidUntil     int64    `json:"valid_until,omitempty"`
+	SiteID         string   `json:"site_id,omitempty"`
+	Severity       string   `json:"severity,omitempty"`
+	FlightCategory string   `json:"flight_category,omitempty"`
+}
+
+// fisbIngestRequest wraps FIS-B products for the ingest endpoint.
+type fisbIngestRequest struct {
+	SourceType   string              `json:"source_type"`
+	FISBProducts []FISBIngestProduct `json:"fisb_products"`
+}
+
+// IngestFISBProducts sends a batch of FIS-B weather products to the platform.
+func (c *Client) IngestFISBProducts(ctx context.Context, products []FISBIngestProduct) error {
+	if !c.IsConfigured() {
+		return fmt.Errorf("not configured (no API key)")
+	}
+
+	req := fisbIngestRequest{
+		SourceType:   "fisb",
+		FISBProducts: products,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal fisb ingest request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create fisb ingest request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("fisb ingest request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("fisb ingest failed: status=%d body=%s", resp.StatusCode, string(respBody))
 	}
 	return nil
 }
