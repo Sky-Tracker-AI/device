@@ -32,6 +32,7 @@ func (m *MockDecoder) Run(ctx context.Context) {
 	m.stats.Synced = true
 	m.stats.PeakSNR = 14.2
 	m.stats.CurrentSNR = 12.5
+	m.stats.ViterbiBER = 0.00042
 	startedAt := time.Now()
 	m.mu.Unlock()
 

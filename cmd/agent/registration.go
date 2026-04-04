@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime"
 
+	"github.com/skytracker/skytracker-device/internal/hwinfo"
 	"github.com/skytracker/skytracker-device/internal/platform"
 	"github.com/skytracker/skytracker-device/internal/state"
 )
@@ -18,14 +19,16 @@ type registrationHelper struct {
 	platHolder *platformClientHolder
 	agentState *state.State
 	endpoint   string
+	hwStatic   hwinfo.StaticInfo
 }
 
-func newRegistrationHelper(platHolder *platformClientHolder, agentState *state.State, endpoint string) *registrationHelper {
+func newRegistrationHelper(platHolder *platformClientHolder, agentState *state.State, endpoint string, hwStatic hwinfo.StaticInfo) *registrationHelper {
 	h := &registrationHelper{
 		retrier:    platform.NewRegistrationRetrier(),
 		platHolder: platHolder,
 		agentState: agentState,
 		endpoint:   endpoint,
+		hwStatic:   hwStatic,
 	}
 	if agentState.IsRegistered() {
 		h.retrier.MarkRegistered()
@@ -43,17 +46,21 @@ func (h *registrationHelper) tryRegister(ctx context.Context, gps gpsInterface) 
 
 	resp := h.retrier.AttemptRegistration(ctx, func(ctx context.Context) (*platform.RegisterResponse, error) {
 		pos := gps.Position()
-		hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		client := h.platHolder.Get()
 		if client == nil {
 			return nil, fmt.Errorf("no platform client")
 		}
 		return client.Register(ctx, platform.RegisterRequest{
-			Serial:       h.agentState.GetSerial(),
-			HardwareInfo: hwInfo,
-			AgentVersion: version,
-			Lat:          pos.Lat,
-			Lon:          pos.Lon,
+			Serial:        h.agentState.GetSerial(),
+			HardwareInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+			OSVersion:     h.hwStatic.OSPrettyName,
+			AgentVersion:  version,
+			Lat:           pos.Lat,
+			Lon:           pos.Lon,
+			BoardModel:    h.hwStatic.BoardModel,
+			CPUModel:      h.hwStatic.CPUModel,
+			KernelVersion: h.hwStatic.KernelVersion,
+			TotalMemoryMB: h.hwStatic.TotalMemoryMB,
 		})
 	})
 

@@ -23,6 +23,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/enrichment"
 	"github.com/skytracker/skytracker-device/internal/geo"
 	"github.com/skytracker/skytracker-device/internal/goes"
+	"github.com/skytracker/skytracker-device/internal/hwinfo"
 	"github.com/skytracker/skytracker-device/internal/gpsd"
 	"github.com/skytracker/skytracker-device/internal/platform"
 	"github.com/skytracker/skytracker-device/internal/queue"
@@ -261,6 +262,12 @@ func main() {
 	}
 	platHolder := &platformClientHolder{client: platform.NewClient(cfg.Platform.Endpoint, apiKey)}
 
+	// Collect static hardware info once at startup.
+	hwStatic := hwinfo.CollectStatic()
+	log.Printf("[hwinfo] board=%q os=%q kernel=%q cpu=%q ram=%dMB",
+		hwStatic.BoardModel, hwStatic.OSPrettyName, hwStatic.KernelVersion,
+		hwStatic.CPUModel, hwStatic.TotalMemoryMB)
+
 	// Auto-register if not yet registered. Never register mock stations with production.
 	if *mockMode {
 		log.Printf("[platform] mock mode — skipping registration and platform sync")
@@ -268,13 +275,17 @@ func main() {
 	}
 	if !*mockMode && !agentState.IsRegistered() {
 		pos := gpsProvider.Position()
-		hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 		regResp, err := platHolder.Get().Register(ctx, platform.RegisterRequest{
-			Serial:       agentState.GetSerial(),
-			HardwareInfo: hwInfo,
-			AgentVersion: version,
-			Lat:          pos.Lat,
-			Lon:          pos.Lon,
+			Serial:        agentState.GetSerial(),
+			HardwareInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+			OSVersion:     hwStatic.OSPrettyName,
+			AgentVersion:  version,
+			Lat:           pos.Lat,
+			Lon:           pos.Lon,
+			BoardModel:    hwStatic.BoardModel,
+			CPUModel:      hwStatic.CPUModel,
+			KernelVersion: hwStatic.KernelVersion,
+			TotalMemoryMB: hwStatic.TotalMemoryMB,
 		})
 		if err != nil {
 			log.Printf("[platform] registration failed (will retry): %v", err)
@@ -353,13 +364,17 @@ func main() {
 		// Wire up registration callback for first-boot scenario.
 		bleService.SetRegisterFunc(func(regCtx context.Context) error {
 			pos := gpsProvider.Position()
-			hwInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 			regResp, err := platHolder.Get().Register(regCtx, platform.RegisterRequest{
-				Serial:       agentState.GetSerial(),
-				HardwareInfo: hwInfo,
-				AgentVersion: version,
-				Lat:          pos.Lat,
-				Lon:          pos.Lon,
+				Serial:        agentState.GetSerial(),
+				HardwareInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+				OSVersion:     hwStatic.OSPrettyName,
+				AgentVersion:  version,
+				Lat:           pos.Lat,
+				Lon:           pos.Lon,
+				BoardModel:    hwStatic.BoardModel,
+				CPUModel:      hwStatic.CPUModel,
+				KernelVersion: hwStatic.KernelVersion,
+				TotalMemoryMB: hwStatic.TotalMemoryMB,
 			})
 			if err != nil {
 				return err
@@ -657,7 +672,7 @@ func main() {
 
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder, uatDecoder)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder, uatDecoder, hwStatic)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -821,12 +836,12 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder, uatDecoder uatDecoderIface) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder, uatDecoder uatDecoderIface, hwStatic hwinfo.StaticInfo) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	// Registration retry helper — retries with exponential backoff on each health tick.
-	regHelper := newRegistrationHelper(holder, agentState, cfg.Platform.Endpoint)
+	regHelper := newRegistrationHelper(holder, agentState, cfg.Platform.Endpoint, hwStatic)
 
 	// Poll health more frequently while unclaimed (30s vs 5m).
 	healthInterval := 30 * time.Second
@@ -1006,16 +1021,27 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				OmniMode:      string(omniMode),
 			}
 
+			// System-level hardware metrics.
+			hwDynamic := hwinfo.CollectDynamic()
+			healthReq.CPUTempC = hwDynamic.CPUTempC
+			healthReq.DiskFreeMB = hwDynamic.DiskFreeMB
+			healthReq.DiskTotalMB = hwDynamic.DiskTotalMB
+
 			// Populate omni health fields.
 			if len(omniSDRs) > 0 {
 				healthReq.SDRCount = len(omniSDRs)
 				serials := make([]string, 0, len(omniSDRs))
+				tunerTypes := make([]string, 0, len(omniSDRs))
 				for _, d := range omniSDRs {
 					if d.SerialNumber != "" {
 						serials = append(serials, d.SerialNumber)
 					}
+					if d.TunerType != "" && d.TunerType != "unknown" {
+						tunerTypes = append(tunerTypes, d.TunerType)
+					}
 				}
 				healthReq.SDRSerials = serials
+				healthReq.SDRTunerTypes = tunerTypes
 			}
 			if satService != nil {
 				healthReq.TLECount = satService.TLECount()
@@ -1058,6 +1084,7 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				healthReq.ACARSMessageCount = stats.MessagesDecoded
 				healthReq.ACARSMessageRate = stats.MessageRate
 				healthReq.ACARSSNR = stats.CurrentSNR
+				healthReq.ACARSViterbiBER = stats.ViterbiBER
 				healthReq.ACARSSatellite = cfg.Omni.ACARS.Satellite
 				healthReq.ACARSFrequency = cfg.Omni.ACARS.FrequencyMHz
 				if acarsDecoder.IsRunning() {

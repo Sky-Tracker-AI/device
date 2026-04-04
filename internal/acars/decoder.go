@@ -17,12 +17,17 @@ import (
 	"github.com/skytracker/skytracker-device/internal/config"
 )
 
-// Regex patterns for SatDump stderr parsing (shared with satellite decoder).
+// Regex patterns for SatDump stderr parsing.
+// The Inmarsat Aero pipeline emits signal quality as JSON trace blocks:
+//   {"correlator_lock": true, "lock_state": "SYNCED", "viterbi_ber": 0.00045}
+// SNR is emitted on a separate line:
+//   Progress nan%, SNR : 12.3dB, Peak SNR: 14.2dB
 var (
-	rePeakSNR = regexp.MustCompile(`Peak SNR\s*:\s*(-?\d+\.?\d*)dB`)
-	reSNR     = regexp.MustCompile(`(?:^|,\s*)SNR\s*:\s*(-?\d+\.?\d*)\s*dB`)
-	reSync    = regexp.MustCompile(`Deframer\s*:\s*SYNCED`)
-	reAnsi    = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	rePeakSNR    = regexp.MustCompile(`Peak SNR\s*:\s*(-?\d+\.?\d*)dB`)
+	reSNR        = regexp.MustCompile(`(?:^|,\s*)SNR\s*:\s*(-?\d+\.?\d*)\s*dB`)
+	reViterbiBER = regexp.MustCompile(`"viterbi_ber"\s*:\s*([0-9.eE+-]+)`)
+	reLockState  = regexp.MustCompile(`"lock_state"\s*:\s*"(\w+)"`)
+	reAnsi       = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 )
 
 // InmarsatDecoder manages a continuously-running SatDump Inmarsat Aero pipeline
@@ -216,6 +221,7 @@ func (d *InmarsatDecoder) runPipeline(ctx context.Context) error {
 	d.stats.MessageRate = 0
 	d.stats.PeakSNR = 0
 	d.stats.CurrentSNR = 0
+	d.stats.ViterbiBER = 0
 	d.stats.Synced = false
 	d.mu.Unlock()
 
@@ -278,6 +284,23 @@ func (d *InmarsatDecoder) readStderr(scanner *bufio.Scanner) {
 	for scanner.Scan() {
 		line := reAnsi.ReplaceAllString(scanner.Text(), "")
 
+		// Check for Viterbi BER from JSON trace blocks.
+		if m := reViterbiBER.FindStringSubmatch(line); len(m) > 1 {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				d.mu.Lock()
+				d.stats.ViterbiBER = v
+				d.mu.Unlock()
+			}
+		}
+
+		// Check for lock state from JSON trace blocks.
+		if m := reLockState.FindStringSubmatch(line); len(m) > 1 {
+			d.mu.Lock()
+			d.stats.Synced = m[1] == "SYNCED"
+			d.mu.Unlock()
+			continue
+		}
+
 		// Check for Peak SNR.
 		if m := rePeakSNR.FindStringSubmatch(line); len(m) > 1 {
 			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
@@ -302,13 +325,6 @@ func (d *InmarsatDecoder) readStderr(scanner *bufio.Scanner) {
 				d.mu.Unlock()
 			}
 			continue
-		}
-
-		// Check for deframer sync.
-		if reSync.MatchString(line) {
-			d.mu.Lock()
-			d.stats.Synced = true
-			d.mu.Unlock()
 		}
 	}
 }

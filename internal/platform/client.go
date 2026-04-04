@@ -43,6 +43,12 @@ type RegisterRequest struct {
 	AgentVersion string  `json:"agent_version"`
 	Lat          float64 `json:"lat"`
 	Lon          float64 `json:"lon"`
+
+	// Static hardware metadata (collected once at startup).
+	BoardModel    string `json:"board_model,omitempty"`
+	CPUModel      string `json:"cpu_model,omitempty"`
+	KernelVersion string `json:"kernel_version,omitempty"`
+	TotalMemoryMB int    `json:"total_memory_mb,omitempty"`
 }
 
 // RegisterResponse is the response from device registration.
@@ -178,6 +184,12 @@ type HealthRequest struct {
 	ActiveDecoder      string           `json:"active_decoder,omitempty"`
 	OmniMode           string           `json:"omni_mode,omitempty"`
 
+	// System-level hardware metrics (omitted on non-Linux).
+	CPUTempC      float64  `json:"cpu_temp_c,omitempty"`
+	DiskFreeMB    int64    `json:"disk_free_mb,omitempty"`
+	DiskTotalMB   int64    `json:"disk_total_mb,omitempty"`
+	SDRTunerTypes []string `json:"sdr_tuner_types,omitempty"`
+
 	// Signal types declares active capabilities (e.g. ["adsb", "satellite", "acars"]).
 	SignalTypes []string `json:"signal_types,omitempty"`
 
@@ -187,6 +199,7 @@ type HealthRequest struct {
 	ACARSMessageRate  float64 `json:"acars_message_rate,omitempty"`
 	ACARSDecoderState string  `json:"acars_decoder_state,omitempty"` // "running", "stopped", "restarting"
 	ACARSSNR          float64 `json:"acars_snr,omitempty"`
+	ACARSViterbiBER   float64 `json:"acars_viterbi_ber,omitempty"`
 	ACARSSatellite    string  `json:"acars_satellite,omitempty"`
 	ACARSFrequency    float64 `json:"acars_frequency,omitempty"`
 

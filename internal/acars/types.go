@@ -41,6 +41,7 @@ type DecoderStats struct {
 	MessageRate     float64 // Messages per minute (rolling 5-minute window)
 	PeakSNR         float64
 	CurrentSNR      float64
+	ViterbiBER      float64 // Viterbi bit error rate (0.0 = perfect)
 	UptimeSeconds   int64
 	LastMessageAt   int64 // Unix milliseconds
 	Synced          bool  // Deframer lock status
