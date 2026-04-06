@@ -184,6 +184,13 @@ type HealthRequest struct {
 	ActiveDecoder      string           `json:"active_decoder,omitempty"`
 	OmniMode           string           `json:"omni_mode,omitempty"`
 
+	// Static hardware info (sent every health check so the platform stays current).
+	BoardModel    string `json:"board_model,omitempty"`
+	CPUModel      string `json:"cpu_model,omitempty"`
+	KernelVersion string `json:"kernel_version,omitempty"`
+	TotalMemoryMB int    `json:"total_memory_mb,omitempty"`
+	OSVersion     string `json:"os_version,omitempty"`
+
 	// System-level hardware metrics (omitted on non-Linux).
 	CPUTempC      float64  `json:"cpu_temp_c,omitempty"`
 	DiskFreeMB    int64    `json:"disk_free_mb,omitempty"`

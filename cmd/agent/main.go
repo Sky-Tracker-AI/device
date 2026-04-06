@@ -1023,6 +1023,13 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 				OmniMode:      string(omniMode),
 			}
 
+			// Static hardware info (sent every tick so the platform stays current).
+			healthReq.BoardModel = hwStatic.BoardModel
+			healthReq.CPUModel = hwStatic.CPUModel
+			healthReq.KernelVersion = hwStatic.KernelVersion
+			healthReq.TotalMemoryMB = hwStatic.TotalMemoryMB
+			healthReq.OSVersion = hwStatic.OSPrettyName
+
 			// System-level hardware metrics.
 			hwDynamic := hwinfo.CollectDynamic()
 			healthReq.CPUTempC = hwDynamic.CPUTempC
