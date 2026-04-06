@@ -405,6 +405,7 @@ func main() {
 	var satService *sat.Service
 	var sched *scheduler.Scheduler
 	var omniSDRs []sdr.SDRDevice
+	var allDetectedSDRs []sdr.SDRDevice
 
 	// ACARS subsystem (Inmarsat L-band, dedicated SDR, always-on).
 	var acarsDecoder acarsDecoderIface
@@ -483,6 +484,7 @@ func main() {
 		} else {
 			// Real hardware detection.
 			allSDRs := sdr.Detect()
+			allDetectedSDRs = allSDRs
 			readsbSerial, readsbActive := sdr.DetectReadsbSerial()
 
 			if readsbActive {
@@ -672,7 +674,7 @@ func main() {
 
 	// --- Platform Sync (background) ---
 	if !*mockMode && platHolder.IsConfigured() && dataQueue != nil {
-		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, acarsDecoder, goesDecoder, uatDecoder, hwStatic)
+		go runPlatformSync(ctx, platHolder, aircraftProvider, gpsProvider, dataQueue, cfg, agentState, claimProv, srv, enrichAdapter, routeCache, bleService, omniMode, satService, sched, omniSDRs, allDetectedSDRs, acarsDecoder, goesDecoder, uatDecoder, hwStatic)
 	}
 
 	log.Printf("SkyTracker Agent ready — http://localhost:%d", cfg.Display.Port)
@@ -836,7 +838,7 @@ func (c *claimStateProviderImpl) ClaimState() server.ClaimState {
 }
 
 // runPlatformSync periodically syncs aircraft data to skytracker.ai.
-func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder, uatDecoder uatDecoderIface, hwStatic hwinfo.StaticInfo) {
+func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircraftInterface, gps gpsInterface, q *queue.Queue, cfg *config.Config, agentState *state.State, claimProv *claimStateProviderImpl, srv *server.Server, enricher *server.EnrichmentAdapter, routeCache *routes.Cache, bleService *ble.Service, omniMode sdr.Mode, satService *sat.Service, sched *scheduler.Scheduler, omniSDRs []sdr.SDRDevice, allDetectedSDRs []sdr.SDRDevice, acarsDecoder acarsDecoderIface, goesDecoder *goes.Decoder, uatDecoder uatDecoderIface, hwStatic hwinfo.StaticInfo) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -1028,11 +1030,16 @@ func runPlatformSync(ctx context.Context, holder *platformClientHolder, ap aircr
 			healthReq.DiskTotalMB = hwDynamic.DiskTotalMB
 
 			// Populate omni health fields.
-			if len(omniSDRs) > 0 {
-				healthReq.SDRCount = len(omniSDRs)
-				serials := make([]string, 0, len(omniSDRs))
-				tunerTypes := make([]string, 0, len(omniSDRs))
-				for _, d := range omniSDRs {
+			// Report ALL detected SDRs (including those reserved by readsb, ACARS, UAT, GOES).
+			sdrsToReport := allDetectedSDRs
+			if len(sdrsToReport) == 0 {
+				sdrsToReport = omniSDRs
+			}
+			if len(sdrsToReport) > 0 {
+				healthReq.SDRCount = len(sdrsToReport)
+				serials := make([]string, 0, len(sdrsToReport))
+				tunerTypes := make([]string, 0, len(sdrsToReport))
+				for _, d := range sdrsToReport {
 					if d.SerialNumber != "" {
 						serials = append(serials, d.SerialNumber)
 					}
