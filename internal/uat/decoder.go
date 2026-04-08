@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
+	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,44 +112,59 @@ func (d *UATDecoder) IsRunning() bool {
 	return d.running
 }
 
-// runPipeline starts rtl_sdr piped into dump978-fa and reads JSON output until exit.
-// We use rtl_sdr instead of dump978-fa's built-in SoapySDR because the SoapySDR
-// RTL-SDR module (0.3.3) has a tuning bug with the R828D chip (RTL-SDR Blog V4)
-// that causes zero frames to be decoded at 978 MHz.
+// runPipeline manages dump978-fa as a separate systemd service and reads
+// decoded JSON frames over TCP. dump978-fa block-buffers stdout when spawned
+// as a subprocess (C++ iostream default), so we run it independently via
+// systemd with --json-port, then connect as a TCP client. This is the
+// standard architecture used by readsb/dump1090 stacks.
 func (d *UATDecoder) runPipeline(ctx context.Context) error {
 	serial := d.sdrSerial
 	if serial == "" {
 		serial = "0"
 	}
 
-	// Find the rtl_sdr device index for this serial number.
-	devIndex, err := d.findDeviceIndex(serial)
-	if err != nil {
-		return fmt.Errorf("find SDR device: %w", err)
+	const jsonPort = "30978"
+	const serviceName = "dump978-uat"
+
+	// Write the systemd unit file.
+	unit := fmt.Sprintf(`[Unit]
+Description=UAT 978 MHz decoder (managed by skytracker-agent)
+
+[Service]
+ExecStartPre=/bin/bash -c 'for m in rtl2832_sdr dvb_usb_rtl28xxu rtl2832 rtl2830 dvb_usb_v2; do rmmod $m 2>/dev/null; done; true'
+ExecStart=%s --sdr driver=rtlsdr,serial=%s --sdr-gain %d --json-port %s
+Restart=always
+RestartSec=5
+`, d.dump978Bin, serial, d.gain, jsonPort)
+
+	if err := os.WriteFile("/etc/systemd/system/"+serviceName+".service", []byte(unit), 0644); err != nil {
+		return fmt.Errorf("write unit file: %w", err)
 	}
 
-	// Use bash to create a shell pipe between rtl_sdr and dump978-fa.
-	// This avoids Go pipe plumbing issues and matches the working manual test.
-	shellCmd := fmt.Sprintf(
-		"rtl_sdr -d %d -f 978000000 -s 2083334 -g %d - 2>/dev/null | %s --stdin --format CU8 --json-stdout",
-		devIndex, d.gain, d.dump978Bin,
-	)
-	cmd := exec.CommandContext(ctx, "bash", "-c", shellCmd)
+	// Start (or restart) the service.
+	exec.Command("systemctl", "daemon-reload").Run()
+	exec.Command("systemctl", "restart", serviceName).Run()
+	log.Printf("[uat] started %s service (serial=%s gain=%d port=%s)", serviceName, serial, d.gain, jsonPort)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
+	// Wait for the TCP port to become available.
+	var conn net.Conn
+	for i := 0; i < 10; i++ {
+		time.Sleep(time.Second)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var err error
+		conn, err = net.DialTimeout("tcp", "127.0.0.1:"+jsonPort, 2*time.Second)
+		if err == nil {
+			break
+		}
+		log.Printf("[uat] waiting for port %s (%d/10): %v", jsonPort, i+1, err)
 	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("stderr pipe: %w", err)
+	if conn == nil {
+		return fmt.Errorf("could not connect to dump978-fa on port %s", jsonPort)
 	}
-
-	log.Printf("[uat] starting: bash -c %q", shellCmd)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start pipeline: %w", err)
-	}
+	defer conn.Close()
+	log.Printf("[uat] connected to dump978-fa JSON stream on port %s", jsonPort)
 
 	d.mu.Lock()
 	d.running = true
@@ -158,68 +174,18 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 	d.stats.LastFrameAt = 0
 	d.mu.Unlock()
 
-	// Read stdout (decoded frames) in a goroutine.
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		d.readStdout(bufio.NewScanner(stdout))
+	defer func() {
+		d.mu.Lock()
+		d.running = false
+		d.mu.Unlock()
 	}()
 
-	// Log stderr for diagnostics.
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			log.Printf("[uat] pipe: %s", scanner.Text())
-		}
-	}()
-
-	// Wait for the pipeline to exit.
-	err = cmd.Wait()
-
-	d.mu.Lock()
-	d.running = false
-	d.mu.Unlock()
-
-	wg.Wait()
-
-	if err != nil {
-		return fmt.Errorf("dump978-fa exited: %w", err)
-	}
-	return nil
-}
-
-// findDeviceIndex maps an SDR serial number to an rtl_sdr device index by
-// querying rtl_test for the device list.
-func (d *UATDecoder) findDeviceIndex(serial string) (int, error) {
-	out, err := exec.Command("rtl_test", "-t").CombinedOutput()
-	if err != nil {
-		// rtl_test returns non-zero even on success; parse output anyway.
-	}
-	// Output format: "  0:  RTLSDRBlog, Blog V4, SN: SKT-ADS-0"
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "SN: "+serial) {
-			continue
-		}
-		// Extract leading index before ":"
-		idx := strings.IndexByte(line, ':')
-		if idx > 0 {
-			n, err := strconv.Atoi(strings.TrimSpace(line[:idx]))
-			if err == nil {
-				return n, nil
-			}
-		}
-	}
-	return 0, fmt.Errorf("no RTL-SDR device with serial %q found", serial)
-}
-
-// readStdout reads dump978-fa JSON output line by line. Each line is a JSON
-// object representing either an ADS-B aircraft frame or a FIS-B uplink frame.
-// Frame classification happens downstream via ClassifyFrame.
-func (d *UATDecoder) readStdout(scanner *bufio.Scanner) {
+	// Read decoded frames from the TCP connection.
+	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || line[0] != '{' {
 			continue
@@ -240,7 +206,14 @@ func (d *UATDecoder) readStdout(scanner *bufio.Scanner) {
 			log.Printf("[uat] frame channel full, dropping frame")
 		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read TCP: %w", err)
+	}
+	return nil
 }
+
+
 
 // IncrementFISBStats updates FIS-B product statistics by the given count.
 func (d *UATDecoder) IncrementFISBStats(count int) {

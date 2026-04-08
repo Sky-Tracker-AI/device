@@ -28,7 +28,7 @@ func Detect() []SDRDevice {
 // DVB-T TV tuners, preventing librtlsdr and SoapySDR from opening them.
 // It also writes a modprobe blacklist so they don't reload on next boot.
 func unloadDVBModules() {
-	modules := []string{"dvb_usb_rtl28xxu", "rtl2832", "rtl2830", "dvb_usb_v2"}
+	modules := []string{"rtl2832_sdr", "dvb_usb_rtl28xxu", "rtl2832", "rtl2830", "dvb_usb_v2"}
 	for _, mod := range modules {
 		out, err := exec.Command("rmmod", mod).CombinedOutput()
 		if err == nil {
