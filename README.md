@@ -311,6 +311,114 @@ The agent respects FAA **LADD** (Limiting Aircraft Data Displayed) flags. LADD-f
 
 **PIA** (Privacy ICAO Address) aircraft have their registration stripped at load time.
 
+## Troubleshooting
+
+### RTL-SDR Blog V4 (R828D) and UAT 978 MHz
+
+The RTL-SDR Blog V4 uses the R828D tuner chip. The SoapySDR RTL-SDR module (v0.3.3) has a tuning bug with the R828D that causes **zero decoded frames** at 978 MHz when using dump978-fa's built-in `--sdr` mode. The agent works around this by piping `rtl_sdr` directly into `dump978-fa --stdin`, bypassing SoapySDR entirely.
+
+If you're debugging UAT reception and see dump978-fa start cleanly but produce zero frames, this is likely the cause. The workaround is automatic in the current agent.
+
+### DVB Kernel Modules Blocking SDR Access
+
+Linux may load DVB-T kernel modules (`dvb_usb_rtl28xxu`, `rtl2832`) that claim RTL-SDR devices as TV tuners, preventing librtlsdr from opening them. Symptoms:
+
+- `usb_claim_interface error -6` in logs
+- SDR processes start but can't access the device
+
+The agent automatically unloads these modules and writes a blacklist to `/etc/modprobe.d/blacklist-rtlsdr.conf` on first run. If you see claim errors, verify the blacklist exists:
+
+```bash
+cat /etc/modprobe.d/blacklist-rtlsdr.conf
+# Should contain:
+# blacklist dvb_usb_rtl28xxu
+# blacklist rtl2832
+# blacklist rtl2830
+# blacklist dvb_usb_v2
+```
+
+### UAT Gain with External LNA (SAWbird+)
+
+If using a Nooelec SAWbird+ ADS-B (dual-channel LNA/filter), the LNA adds ~30 dB of hardware gain. **The SDR gain must be lowered** to avoid ADC saturation:
+
+| Setup | Recommended SDR Gain |
+|-------|---------------------|
+| No LNA (antenna direct to SDR) | 40–49 dB |
+| SAWbird+ or similar external LNA | **10–20 dB** |
+
+**Symptoms of ADC saturation:** The noise floor reads above -10 dBFS (check with `rtl_power`), dump978-fa runs but decodes zero frames, and aircraft that should be in range are invisible.
+
+To check the noise floor:
+```bash
+# Stop the agent first, then:
+rtl_power -d <device_index> -f 977.5M:978.5M:50k -g <gain> -i 1 -e 5
+# Healthy: avg around -25 to -35 dBFS
+# Saturated: avg above -10 dBFS
+```
+
+Set the UAT gain in `/etc/skytracker/config.yaml`:
+```yaml
+omni:
+  uat:
+    gain: 15  # Lower this if using an external LNA
+```
+
+### SAWbird+ Dual-Channel LNA Wiring
+
+The SAWbird+ ADS-B has **two separate signal paths** with bandpass filters:
+
+- **UAT Input** → 978 MHz SAW filter + LNA → **978 MHz Output**
+- **ADS-B Input** → 1090 MHz SAW filter + LNA → **1090 MHz Output**
+
+Common wiring mistakes:
+- **Swapped SDR output cables** — each SDR must connect to the correct filtered output. If 1090 ES shows zero aircraft and UAT shows zero frames, the output cables are likely crossed.
+- **Swapped antenna input cables** — each antenna must connect to the correct input. Disconnect one input at a time to verify which path feeds which.
+- **Internally crossed routing** — some SAWbird+ units have input-to-output routing that doesn't match the labels. Test empirically: disconnect one antenna and see which signal disappears.
+- **USB power not connected** — the SAWbird+ requires USB power. Without it, both channels are dead.
+
+### FIS-B Ground Station Reception
+
+FIS-B weather products are transmitted by FAA Ground Based Transceivers (GBTs) at 978 MHz. Their antennas are designed to **radiate upward toward aircraft**, not horizontally. Ground-level reception is limited:
+
+- **Within ~1 mile of a GBT**: Reliable FIS-B reception
+- **1–10 miles**: Possible with a good antenna and LNA
+- **10+ miles**: Unlikely at ground level due to antenna pattern and terrain
+
+If you see UAT aircraft but no FIS-B weather, this is normal for ground-based stations far from a GBT. Aircraft UAT signals work because they transmit omnidirectionally from altitude.
+
+### WiFi Drops on Raspberry Pi
+
+The Pi 4's WiFi can drop intermittently due to:
+
+1. **Power save mode** — the WiFi radio sleeps to save power, causing latency spikes and dropped connections. Disable it:
+   ```bash
+   # Immediate
+   sudo iw wlan0 set power_save off
+
+   # Permanent (NetworkManager)
+   CONN=$(nmcli -t -f NAME,DEVICE connection show --active | grep wlan0 | cut -d: -f1)
+   sudo nmcli connection modify "$CONN" wifi.powersave 2
+   ```
+
+2. **USB RF interference** — RTL-SDR dongles and USB-powered LNAs generate RF noise near the Pi's WiFi antenna. Use a short USB extension cable to move the SDR dongles away from the Pi.
+
+3. **Weak signal** — check with `cat /proc/net/wireless`. Signal below -70 dBm with high retry counts indicates the Pi needs to be closer to the access point.
+
+### SDR Serial Assignment
+
+The agent auto-detects which SDR is claimed by readsb and assigns the remaining SDR(s) to UAT/satellite/ACARS. The assignment is based on serial numbers:
+
+- readsb config (`/etc/default/readsb`) specifies `--device <serial>` 
+- The agent reads this, filters it out, and assigns remaining SDRs
+
+If you swap physical SDR connections (e.g., which dongle plugs into which SAWbird+ output), update the readsb config to match:
+
+```bash
+sudo nano /etc/default/readsb
+# Change: --device SKT-ADS-0  →  --device SKT-OMNI-0 (or vice versa)
+sudo systemctl restart readsb skytracker
+```
+
 ## Contributing
 
 We welcome contributions! Here's how to get started.
