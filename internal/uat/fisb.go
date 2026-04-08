@@ -14,14 +14,11 @@ import (
 func ClassifyFrame(frame RawFrame) string {
 	line := frame.Line
 	if strings.Contains(line, `"address"`) {
-		// Check for adsb_ type prefix.
-		if idx := strings.Index(line, `"type":"`); idx >= 0 {
-			after := line[idx+len(`"type":"`):]
-			if strings.HasPrefix(after, "adsb_") {
-				return "adsb"
-			}
+		// dump978-fa uses "address_qualifier":"adsb_icao" (not "type").
+		if strings.Contains(line, `"address_qualifier":"adsb_`) {
+			return "adsb"
 		}
-		// Has address but not adsb type — could be TIS-B trackfile (Phase 4).
+		// Has address but not adsb qualifier — could be TIS-B.
 		return "unknown"
 	}
 	if strings.Contains(line, `"tisb_site_id"`) && strings.Contains(line, `"products"`) {
