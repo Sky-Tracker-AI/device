@@ -111,36 +111,43 @@ func (d *UATDecoder) IsRunning() bool {
 	return d.running
 }
 
-// runPipeline starts dump978-fa and reads JSON output until exit.
+// runPipeline starts rtl_sdr piped into dump978-fa and reads JSON output until exit.
+// We use rtl_sdr instead of dump978-fa's built-in SoapySDR because the SoapySDR
+// RTL-SDR module (0.3.3) has a tuning bug with the R828D chip (RTL-SDR Blog V4)
+// that causes zero frames to be decoded at 978 MHz.
 func (d *UATDecoder) runPipeline(ctx context.Context) error {
 	serial := d.sdrSerial
 	if serial == "" {
 		serial = "0"
 	}
 
-	// Pass the serial via the --sdr device string rather than --sdr-serial.
-	// SoapySDR's --sdr-serial path enumerates all devices (failing on busy
-	// ones), while driver=rtlsdr,serial=X opens the device directly.
-	sdrArg := fmt.Sprintf("driver=rtlsdr,serial=%s", serial)
-	args := []string{
-		"--sdr", sdrArg,
-		"--sdr-gain", strconv.Itoa(d.gain),
-		"--json-stdout",
-	}
-	if d.biasT {
-		args = append(args, "--sdr-device-settings", "biastee=true")
+	// Find the rtl_sdr device index for this serial number.
+	devIndex, err := d.findDeviceIndex(serial)
+	if err != nil {
+		return fmt.Errorf("find SDR device: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, d.dump978Bin, args...)
+	// Use bash to create a shell pipe between rtl_sdr and dump978-fa.
+	// This avoids Go pipe plumbing issues and matches the working manual test.
+	shellCmd := fmt.Sprintf(
+		"rtl_sdr -d %d -f 978000000 -s 2083334 -g %d - 2>/dev/null | %s --stdin --format CU8 --json-stdout",
+		devIndex, d.gain, d.dump978Bin,
+	)
+	cmd := exec.CommandContext(ctx, "bash", "-c", shellCmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	log.Printf("[uat] starting dump978-fa: %v", args)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	log.Printf("[uat] starting: bash -c %q", shellCmd)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start dump978-fa: %w", err)
+		return fmt.Errorf("start pipeline: %w", err)
 	}
 
 	d.mu.Lock()
@@ -153,13 +160,22 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 
 	// Read stdout (decoded frames) in a goroutine.
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		d.readStdout(bufio.NewScanner(stdout))
 	}()
 
-	// Wait for dump978-fa to exit.
+	// Log stderr for diagnostics.
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			log.Printf("[uat] pipe: %s", scanner.Text())
+		}
+	}()
+
+	// Wait for the pipeline to exit.
 	err = cmd.Wait()
 
 	d.mu.Lock()
@@ -172,6 +188,31 @@ func (d *UATDecoder) runPipeline(ctx context.Context) error {
 		return fmt.Errorf("dump978-fa exited: %w", err)
 	}
 	return nil
+}
+
+// findDeviceIndex maps an SDR serial number to an rtl_sdr device index by
+// querying rtl_test for the device list.
+func (d *UATDecoder) findDeviceIndex(serial string) (int, error) {
+	out, err := exec.Command("rtl_test", "-t").CombinedOutput()
+	if err != nil {
+		// rtl_test returns non-zero even on success; parse output anyway.
+	}
+	// Output format: "  0:  RTLSDRBlog, Blog V4, SN: SKT-ADS-0"
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "SN: "+serial) {
+			continue
+		}
+		// Extract leading index before ":"
+		idx := strings.IndexByte(line, ':')
+		if idx > 0 {
+			n, err := strconv.Atoi(strings.TrimSpace(line[:idx]))
+			if err == nil {
+				return n, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no RTL-SDR device with serial %q found", serial)
 }
 
 // readStdout reads dump978-fa JSON output line by line. Each line is a JSON

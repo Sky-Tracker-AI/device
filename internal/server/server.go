@@ -405,6 +405,7 @@ func (s *Server) sendUpdate() {
 			Lon:        *a.Lon,
 			DistanceNM: round2(distNM),
 			Bearing:    round1(bearing),
+			Source:      "1090es",
 		}
 
 		// Enrich with type info.

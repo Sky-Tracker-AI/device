@@ -18,8 +18,38 @@ const (
 )
 
 // Detect enumerates RTL-SDR devices by walking /sys/bus/usb/devices/.
+// It first unloads conflicting DVB kernel modules that claim RTL-SDR hardware.
 func Detect() []SDRDevice {
+	unloadDVBModules()
 	return detectFromSysfs("/sys/bus/usb/devices")
+}
+
+// unloadDVBModules removes kernel modules that claim RTL-SDR USB devices as
+// DVB-T TV tuners, preventing librtlsdr and SoapySDR from opening them.
+// It also writes a modprobe blacklist so they don't reload on next boot.
+func unloadDVBModules() {
+	modules := []string{"dvb_usb_rtl28xxu", "rtl2832", "rtl2830", "dvb_usb_v2"}
+	for _, mod := range modules {
+		out, err := exec.Command("rmmod", mod).CombinedOutput()
+		if err == nil {
+			log.Printf("[sdr] unloaded conflicting kernel module %s", mod)
+		}
+		_ = out
+	}
+
+	// Persist the blacklist so modules don't reload after reboot.
+	const blacklistPath = "/etc/modprobe.d/blacklist-rtlsdr.conf"
+	if _, err := os.Stat(blacklistPath); err != nil {
+		var content string
+		for _, mod := range modules {
+			content += "blacklist " + mod + "\n"
+		}
+		if err := os.WriteFile(blacklistPath, []byte(content), 0644); err != nil {
+			log.Printf("[sdr] could not write %s: %v", blacklistPath, err)
+		} else {
+			log.Printf("[sdr] wrote %s to prevent DVB module loading", blacklistPath)
+		}
+	}
 }
 
 func detectFromSysfs(sysfsBase string) []SDRDevice {
