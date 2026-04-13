@@ -64,6 +64,25 @@ if [[ $WAITED -lt $MAX_WAIT ]]; then
     echo "[kiosk] UI is ready (waited ${WAITED}s)."
 fi
 
+# ── Detect display server ────────────────────────────────────────────────────
+
+WAYLAND_ARGS=()
+if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    # Auto-detect Wayland socket when launched outside the compositor session
+    for sock in /run/user/$(id -u)/wayland-*; do
+        if [[ -S "$sock" ]]; then
+            export WAYLAND_DISPLAY="$(basename "$sock")"
+            export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+            break
+        fi
+    done
+fi
+
+if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    WAYLAND_ARGS=(--ozone-platform=wayland)
+    echo "[kiosk] Wayland detected: WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+fi
+
 # ── Launch Chromium ──────────────────────────────────────────────────────────
 
 # ── Find Chromium binary ──────────────────────────────────────────────────
@@ -103,4 +122,5 @@ exec "$CHROMIUM" \
     --disable-smooth-scrolling \
     --window-size=1024,600 \
     --window-position=0,0 \
+    "${WAYLAND_ARGS[@]}" \
     "${URL}"
