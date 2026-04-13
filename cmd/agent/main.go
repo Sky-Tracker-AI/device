@@ -39,7 +39,7 @@ import (
 	"github.com/skytracker/skytracker-device/internal/wifi"
 )
 
-const version = "0.9.2"
+const version = "0.9.3"
 
 func main() {
 	var (
@@ -615,8 +615,7 @@ func main() {
 					return
 				case frame := <-uatDecoder.Frames():
 					frameType := uat.ClassifyFrame(frame)
-					switch frameType {
-					case "adsb":
+					if frameType == "adsb" {
 						if a, ok := uat.ParseFrame(frame); ok {
 							// Update or add aircraft by hex.
 							found := false
@@ -631,21 +630,22 @@ func main() {
 								aircraft = append(aircraft, a)
 							}
 						}
-					case "uplink":
-						if cfg.Omni.UAT.FISB.Enabled {
-							products, _, err := uat.ParseUplinkProducts(frame)
-							if err != nil {
-								log.Printf("[uat] uplink parse error: %v", err)
-								continue
+					}
+				case rawUplink := <-uatDecoder.UplinkFrames():
+					if cfg.Omni.UAT.FISB.Enabled {
+						products, err := uat.DecodeRawUplink(rawUplink.Line)
+						if err != nil {
+							log.Printf("[uat] uplink decode error: %v", err)
+							continue
+						}
+						for _, p := range products {
+							select {
+							case fisbChan <- p:
+							default:
+								log.Printf("[uat] fisb channel full, dropping product")
 							}
-							for _, p := range products {
-								select {
-								case fisbChan <- p:
-								default:
-									log.Printf("[uat] fisb channel full, dropping product")
-								}
-							}
-							// Update FIS-B stats on the real decoder.
+						}
+						if len(products) > 0 {
 							if d, ok := uatDecoder.(*uat.UATDecoder); ok {
 								d.IncrementFISBStats(len(products))
 							}
@@ -1201,6 +1201,7 @@ type acarsDecoderIface interface {
 // uatDecoderIface abstracts over uat.UATDecoder and uat.MockUATDecoder.
 type uatDecoderIface interface {
 	Frames() <-chan uat.RawFrame
+	UplinkFrames() <-chan uat.RawFrame
 	Stats() uat.DecoderStats
 	IsRunning() bool
 }
