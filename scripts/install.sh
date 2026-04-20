@@ -16,6 +16,11 @@
 #   SKYTRACKER_REPLACE_READSB   — Set to 1 to replace an existing readsb / feeder
 #                                 install (fr24feed, piaware, rbfeeder, etc.).
 #                                 Default: abort if another feeder is detected.
+#   SKYTRACKER_SKIP_DECODER     — Set to 1 to install the agent without touching
+#                                 any ADS-B decoder. You must then set
+#                                 sources.dump1090_url in /etc/skytracker/config.yaml
+#                                 to point at your existing aircraft.json. See:
+#                                 https://skytracker.ai/docs/shared-feeder
 # ============================================================================
 
 set -euo pipefail
@@ -135,6 +140,13 @@ detect_existing_feeder() {
 }
 
 install_adsb_decoder() {
+    if [[ "${SKYTRACKER_SKIP_DECODER:-0}" == "1" ]]; then
+        info "SKYTRACKER_SKIP_DECODER=1 — skipping decoder install"
+        info "Remember to set sources.dump1090_url in ${CONFIG_FILE}"
+        info "See https://skytracker.ai/docs/shared-feeder"
+        return
+    fi
+
     if command -v readsb &>/dev/null; then
         success "ADS-B decoder already installed"
         return
