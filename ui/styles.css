@@ -480,6 +480,76 @@ body.night-mode .detail-callsign {
   animation: pulse-glow 3s ease-in-out infinite;
 }
 
+/* --- Source Filters --- */
+.source-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.source-btn {
+  background: transparent;
+  border: 0.07rem solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.45rem;
+  font-weight: 600;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.source-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-accent);
+}
+
+.source-btn.active {
+  color: var(--text-accent);
+  border-color: var(--text-accent);
+  background: rgba(96, 239, 255, 0.08);
+}
+
+/* Source badge in list rows */
+.col-src { flex: 0.8; }
+
+.source-badge {
+  font-size: 0.45rem;
+  font-weight: 600;
+  letter-spacing: 0.04rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.source-badge.uat {
+  color: #ff9f43;
+}
+
+/* Source indicator in detail panel */
+.detail-source {
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 0.08rem 0.35rem;
+  border-radius: 0.3rem;
+  border: 0.07rem solid var(--border-subtle);
+}
+
+.detail-source.uat {
+  color: #ff9f43;
+  border-color: rgba(255, 159, 67, 0.3);
+  background: rgba(255, 159, 67, 0.08);
+}
+
+.detail-source:empty {
+  display: none;
+}
+
 /* --- Setup / Claim Overlay --- */
 .setup-overlay {
   position: fixed;

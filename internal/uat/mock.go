@@ -13,8 +13,9 @@ import (
 // MockUATDecoder generates synthetic GA aircraft frames for development
 // without hardware. Implements the same interface as UATDecoder.
 type MockUATDecoder struct {
-	frames chan RawFrame
-	mu     sync.Mutex
+	frames  chan RawFrame
+	uplinks chan RawFrame
+	mu      sync.Mutex
 	running bool
 	stats   DecoderStats
 }
@@ -22,7 +23,8 @@ type MockUATDecoder struct {
 // NewMockUATDecoder creates a mock decoder that produces synthetic 978 MHz UAT traffic.
 func NewMockUATDecoder() *MockUATDecoder {
 	return &MockUATDecoder{
-		frames: make(chan RawFrame, 100),
+		frames:  make(chan RawFrame, 100),
+		uplinks: make(chan RawFrame, 100),
 	}
 }
 
@@ -95,6 +97,11 @@ func (m *MockUATDecoder) Run(ctx context.Context) {
 // Frames returns the channel of raw frames.
 func (m *MockUATDecoder) Frames() <-chan RawFrame {
 	return m.frames
+}
+
+// UplinkFrames returns an empty channel (mock doesn't generate uplinks).
+func (m *MockUATDecoder) UplinkFrames() <-chan RawFrame {
+	return m.uplinks
 }
 
 // Stats returns decoder statistics.

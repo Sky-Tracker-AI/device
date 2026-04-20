@@ -1,7 +1,7 @@
 package uat
 
 import (
-	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -9,8 +9,18 @@ import (
 	"time"
 )
 
-// ClassifyFrame determines whether a raw JSON frame is an ADS-B aircraft frame,
-// a FIS-B uplink frame, or something else.
+const (
+	// uplinkFrameDataBytes is the size of a decoded UAT uplink frame (432 bytes = 864 hex chars).
+	uplinkFrameDataBytes = 432
+
+	// dlacAlpha is the DLAC (Data Link Alphabet Character) lookup table.
+	// Index 0 = ETX (end of text), index 28 = tab (expands to spaces).
+	dlacAlpha = "\x03ABCDEFGHIJKLMNOPQRSTUVWXYZ\x1A\t\x1E\n| !\"#$%&'()*+,-./0123456789:;<=>?"
+)
+
+// ClassifyFrame determines whether a raw JSON frame from the json-port is an
+// ADS-B aircraft frame or something else. Uplink/FIS-B frames are NOT emitted
+// on the JSON port — they arrive via the raw port and are handled separately.
 func ClassifyFrame(frame RawFrame) string {
 	line := frame.Line
 	if strings.Contains(line, `"address"`) {
@@ -21,58 +31,195 @@ func ClassifyFrame(frame RawFrame) string {
 		// Has address but not adsb qualifier — could be TIS-B.
 		return "unknown"
 	}
-	if strings.Contains(line, `"tisb_site_id"`) && strings.Contains(line, `"products"`) {
-		return "uplink"
-	}
 	return "unknown"
 }
 
-// uplinkFrame is the JSON structure of a dump978 uplink frame.
-type uplinkFrame struct {
-	TISBSiteID string          `json:"tisb_site_id"`
-	Timestamp  float64         `json:"timestamp"`
-	Products   []uplinkProduct `json:"products"`
-}
+// DecodeRawUplink decodes a raw hex uplink line from dump978-fa's --raw-port
+// into FIS-B weather products. The line format is: +<864 hex chars>;ss=N;rs=N
+func DecodeRawUplink(line string) ([]FISBProduct, error) {
+	// Strip metadata after semicolon.
+	parts := strings.SplitN(line, ";", 2)
+	hexStr := parts[0]
 
-type uplinkProduct struct {
-	ProductID int    `json:"product_id"`
-	Data      string `json:"data"`
-}
+	if len(hexStr) < 1 || hexStr[0] != '+' {
+		return nil, fmt.Errorf("not an uplink frame")
+	}
+	hexStr = hexStr[1:] // strip '+' prefix
 
-// ParseUplinkProducts parses a FIS-B uplink frame and returns parsed products.
-// Returns the parsed products, the site ID, and any error.
-func ParseUplinkProducts(frame RawFrame) ([]FISBProduct, string, error) {
-	var uf uplinkFrame
-	if err := json.Unmarshal([]byte(frame.Line), &uf); err != nil {
-		return nil, "", fmt.Errorf("unmarshal uplink frame: %w", err)
+	if len(hexStr) != uplinkFrameDataBytes*2 {
+		return nil, fmt.Errorf("wrong uplink length: %d hex chars (expected %d)", len(hexStr), uplinkFrameDataBytes*2)
+	}
+
+	frame := make([]byte, uplinkFrameDataBytes)
+	if _, err := hex.Decode(frame, []byte(hexStr)); err != nil {
+		return nil, fmt.Errorf("hex decode: %w", err)
+	}
+
+	// Extract TIS-B site ID (byte 7, upper nibble).
+	siteID := fmt.Sprintf("%d", frame[7]>>4)
+
+	// Check app_data_valid flag (byte 6, bit 5).
+	if frame[6]&0x20 == 0 {
+		return nil, nil // no application data
 	}
 
 	now := time.Now().UnixMilli()
-	if uf.Timestamp > 0 {
-		now = int64(uf.Timestamp * 1000)
-	}
 
+	// Parse info frames from application data (bytes 8–431).
+	appData := frame[8:uplinkFrameDataBytes]
 	var products []FISBProduct
-	for _, p := range uf.Products {
-		if p.Data == "" {
+	pos := 0
+	maxFrames := len(appData) / 6 // upper bound on info frames
+
+	for i := 0; i < maxFrames && pos+2 <= len(appData); i++ {
+		frameLen := int((uint32(appData[pos]) << 1) | (uint32(appData[pos+1]) >> 7))
+		frameType := uint32(appData[pos+1]) & 0x0f
+
+		if frameLen == 0 {
+			break
+		}
+		if pos+2+frameLen > len(appData) {
+			break
+		}
+
+		infoData := appData[pos+2 : pos+2+frameLen]
+		pos += 2 + frameLen
+
+		// Only process FIS-B APDUs (frame_type 0).
+		if frameType != 0 || len(infoData) < 3 {
 			continue
 		}
-		product, ok := routeByProductID(p.ProductID, p.Data, uf.TISBSiteID, now)
-		if ok {
-			products = append(products, *product)
+
+		// Extract product ID (11 bits spanning bytes 0-1).
+		productID := int(((uint32(infoData[0]) & 0x1f) << 6) | (uint32(infoData[1]) >> 2))
+
+		// Decode DLAC text from the FIS-B payload.
+		text := decodeFISBText(infoData, uint32(frameLen))
+		if text == "" {
+			continue
+		}
+
+		// Split multi-report frames on record separators.
+		reports := splitReports(text)
+		for _, report := range reports {
+			report = strings.TrimSpace(report)
+			if report == "" {
+				continue
+			}
+			product, ok := routeByProductID(productID, report, siteID, now)
+			if ok {
+				products = append(products, *product)
+			}
 		}
 	}
-	return products, uf.TISBSiteID, nil
+
+	return products, nil
+}
+
+// decodeFISBText extracts and DLAC-decodes the text payload from a FIS-B info
+// frame. The frame starts with 2 bytes of product ID/flags, followed by a
+// variable-length time header (2–4 additional bytes), then DLAC-encoded text.
+func decodeFISBText(data []byte, frameLen uint32) string {
+	if len(data) < 3 {
+		return ""
+	}
+
+	// t_opt is 2 bits: data[1] bit 0 and data[2] bit 7.
+	tOpt := ((uint32(data[1]) & 0x01) << 1) | (uint32(data[2]) >> 7)
+
+	var headerLen uint32
+	switch tOpt {
+	case 0:
+		headerLen = 4 // hours, minutes
+	case 1:
+		headerLen = 5 // hours, minutes, seconds
+	case 2:
+		headerLen = 5 // month, day, hours, minutes
+	case 3:
+		headerLen = 6 // month, day, hours, minutes, seconds
+	default:
+		return ""
+	}
+
+	if frameLen < headerLen {
+		return ""
+	}
+	if uint32(len(data)) < headerLen {
+		return ""
+	}
+
+	fisbData := data[headerLen:]
+	fisbLen := frameLen - headerLen
+	if uint32(len(fisbData)) < fisbLen {
+		return ""
+	}
+
+	return dlacDecode(fisbData, fisbLen)
+}
+
+// dlacDecode unpacks 6-bit DLAC characters from a byte stream.
+// Every 3 bytes encode 4 characters (24 bits → 4 × 6-bit chars).
+func dlacDecode(data []byte, dataLen uint32) string {
+	step := 0
+	tab := false
+	var sb strings.Builder
+
+	for i := uint32(0); i < dataLen; i++ {
+		var ch uint32
+		switch step {
+		case 0:
+			ch = uint32(data[i]) >> 2
+		case 1:
+			ch = ((uint32(data[i-1]) & 0x03) << 4) | (uint32(data[i]) >> 4)
+		case 2:
+			ch = ((uint32(data[i-1]) & 0x0f) << 2) | (uint32(data[i]) >> 6)
+			i-- // byte shared between two characters
+		case 3:
+			ch = uint32(data[i]) & 0x3f
+		}
+
+		if tab {
+			for ch > 0 {
+				sb.WriteByte(' ')
+				ch--
+			}
+			tab = false
+		} else if ch == 28 {
+			tab = true
+		} else if int(ch) < len(dlacAlpha) {
+			sb.WriteByte(dlacAlpha[ch])
+		}
+
+		step = (step + 1) % 4
+	}
+
+	return sb.String()
+}
+
+// splitReports splits DLAC-decoded text into individual reports.
+// Reports are separated by \x1E (record separator) or \x03 (end of text).
+func splitReports(text string) []string {
+	// Replace ETX with record separator so we can split once.
+	text = strings.ReplaceAll(text, "\x03", "\x1E")
+	parts := strings.Split(text, "\x1E")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // routeByProductID dispatches to the appropriate parser based on FIS-B product ID.
 func routeByProductID(productID int, data string, siteID string, timestamp int64) (*FISBProduct, bool) {
 	switch {
-	case productID == 63 || productID == 64 || productID == 413:
-		// NEXRAD radar — Phase 3, skip for now.
+	case productID == 63 || productID == 64:
+		// NEXRAD radar imagery — graphical product, skip.
 		return nil, false
 	case productID >= 70 && productID <= 83:
-		// TFR graphics — Phase 3, skip for now.
+		// TFR graphics — graphical product, skip.
 		return nil, false
 	case productID == 14:
 		return parseMETAR(data, siteID, timestamp), true
@@ -322,13 +469,13 @@ func parsePIREP(data string, siteID string, timestamp int64) *FISBProduct {
 	}
 
 	return &FISBProduct{
-		Timestamp:   timestamp,
-		ProductID:   16,
-		ProductName: "pirep",
-		RawText:     text,
-		SiteID:      siteID,
-		Severity:    severity,
-		AltitudeLow: altLow,
+		Timestamp:    timestamp,
+		ProductID:    16,
+		ProductName:  "pirep",
+		RawText:      text,
+		SiteID:       siteID,
+		Severity:     severity,
+		AltitudeLow:  altLow,
 		AltitudeHigh: altHigh,
 	}
 }

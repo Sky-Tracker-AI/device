@@ -10,9 +10,12 @@
 #   curl -sSL https://get.skytracker.ai | sudo bash
 #
 # Environment variables (optional):
-#   SKYTRACKER_LAT   — Station latitude  (auto-detected from IP if unset)
-#   SKYTRACKER_LON   — Station longitude (auto-detected from IP if unset)
-#   SKYTRACKER_NAME  — Station name      (default: auto-detected city)
+#   SKYTRACKER_LAT              — Station latitude  (auto-detected from IP if unset)
+#   SKYTRACKER_LON              — Station longitude (auto-detected from IP if unset)
+#   SKYTRACKER_NAME             — Station name      (default: auto-detected city)
+#   SKYTRACKER_REPLACE_READSB   — Set to 1 to replace an existing readsb / feeder
+#                                 install (fr24feed, piaware, rbfeeder, etc.).
+#                                 Default: abort if another feeder is detected.
 # ============================================================================
 
 set -euo pipefail
@@ -101,6 +104,35 @@ detect_os() {
 # The Debian-packaged readsb lacks RTL-SDR support, so we use wiedehopf's
 # build script which compiles readsb from source with full SDR support.
 # It also installs tar1090 (lighttpd) which serves aircraft.json on port 80.
+#
+# Attribution: readsb is maintained by wiedehopf (github.com/wiedehopf/readsb,
+# GPL-2.0), descended from Mutability's dump1090 fork and antirez's original
+# dump1090. SkyTracker does not modify or redistribute readsb — we install it
+# unchanged via the upstream installer. See ACKNOWLEDGMENTS.md for full credits.
+
+# Checks for other ADS-B feeder software that would be disrupted by replacing
+# readsb. Returns 0 if a conflicting feeder is detected.
+detect_existing_feeder() {
+    local found=()
+    # Packages
+    for pkg in fr24feed piaware rbfeeder adsbexchange-feed dump1090-fa dump1090-mutability; do
+        if dpkg -l "$pkg" >/dev/null 2>&1; then
+            found+=("$pkg (package)")
+        fi
+    done
+    # Services (covers manual installs)
+    for svc in fr24feed piaware rbfeeder adsbexchange-feed dump1090-fa readsb; do
+        if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1 \
+           && systemctl is-enabled "${svc}.service" >/dev/null 2>&1; then
+            found+=("${svc}.service")
+        fi
+    done
+    if [[ ${#found[@]} -gt 0 ]]; then
+        printf '%s\n' "${found[@]}"
+        return 0
+    fi
+    return 1
+}
 
 install_adsb_decoder() {
     if command -v readsb &>/dev/null; then
@@ -108,18 +140,42 @@ install_adsb_decoder() {
         return
     fi
 
-    info "Installing readsb (with RTL-SDR support)..."
+    info "Installing readsb via wiedehopf/adsb-scripts (github.com/wiedehopf/readsb, GPL-2.0)"
+    info "SkyTracker uses readsb unchanged — see ACKNOWLEDGMENTS.md for full credits"
+
+    # Refuse to touch an existing feeder setup unless the user opts in.
+    if existing=$(detect_existing_feeder); then
+        if [[ "${SKYTRACKER_REPLACE_READSB:-0}" != "1" ]]; then
+            warn "Detected existing ADS-B feeder software on this device:"
+            while IFS= read -r line; do
+                echo "       - $line"
+            done <<< "$existing"
+            echo ""
+            warn "Installing SkyTracker's readsb build would replace your current setup"
+            warn "and likely break feeds to FlightRadar24, FlightAware, ADS-B Exchange, etc."
+            echo ""
+            echo "       If you want SkyTracker to share this device with other feeders,"
+            echo "       see the multi-feeder guide: https://skytracker.ai/docs/shared-feeder"
+            echo ""
+            echo "       To replace the existing decoder anyway, re-run with:"
+            echo "         SKYTRACKER_REPLACE_READSB=1 curl -sSL https://get.skytracker.ai | sudo -E bash"
+            fail "Aborting to protect your existing feeder setup"
+        fi
+        warn "SKYTRACKER_REPLACE_READSB=1 set — proceeding to replace existing decoder"
+    fi
 
     apt-get update -qq >/dev/null 2>&1
     apt-get install -y -qq curl librtlsdr0 rtl-sdr >/dev/null 2>&1
 
-    # Remove Debian-packaged readsb if present (no RTL-SDR support)
+    # Remove Debian-packaged readsb if present (no RTL-SDR support).
+    # Only reached when no other feeder was detected, or user opted in above.
     if dpkg -l readsb >/dev/null 2>&1; then
+        info "Removing Debian-packaged readsb (lacks RTL-SDR support)"
         apt-get remove -y -qq readsb >/dev/null 2>&1 || true
     fi
 
     if bash -c "$(curl -fsSL https://raw.githubusercontent.com/wiedehopf/adsb-scripts/master/readsb-install.sh)" >/dev/null 2>&1; then
-        success "readsb installed with RTL-SDR support"
+        success "readsb installed with RTL-SDR support (thanks to wiedehopf)"
     else
         warn "Could not install readsb — see https://github.com/wiedehopf/adsb-scripts"
     fi

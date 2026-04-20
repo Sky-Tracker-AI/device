@@ -258,7 +258,8 @@ var SkyTrackerRadar = (function () {
       var pos = polarToCanvas(ac.bearing, ac.distance);
       if (!pos) continue;
 
-      var color = getAltitudeColor(ac.altitude);
+      var isUat = ac.source === 'uat';
+      var color = isUat ? '#ff9f43' : getAltitudeColor(ac.altitude);
       var isSelected = ac.icao === selectedIcao;
       var isRare = ac.rarity != null && ac.rarity >= 7;
 
@@ -293,19 +294,40 @@ var SkyTrackerRadar = (function () {
         ctx.stroke();
       }
 
-      // Main dot
+      // Main dot (diamond for UAT, circle for ADS-B)
       ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, dotRadius, 0, TWO_PI);
-      ctx.fill();
+      if (isUat) {
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y - dotRadius);
+        ctx.lineTo(pos.x + dotRadius, pos.y);
+        ctx.lineTo(pos.x, pos.y + dotRadius);
+        ctx.lineTo(pos.x - dotRadius, pos.y);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, dotRadius, 0, TWO_PI);
+        ctx.fill();
+      }
 
       // Selected ring
       if (isSelected) {
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, dotRadius + 4, 0, TWO_PI);
-        ctx.stroke();
+        if (isUat) {
+          var sr = dotRadius + 4;
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y - sr);
+          ctx.lineTo(pos.x + sr, pos.y);
+          ctx.lineTo(pos.x, pos.y + sr);
+          ctx.lineTo(pos.x - sr, pos.y);
+          ctx.closePath();
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, dotRadius + 4, 0, TWO_PI);
+          ctx.stroke();
+        }
       }
 
       // Rarity badge (gold star marker)

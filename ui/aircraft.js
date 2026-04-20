@@ -19,6 +19,7 @@ var SkyTrackerAircraft = (function () {
   var detailDistance = null;
   var detailRarityBadge = null;
   var detailRarityValue = null;
+  var detailSource = null;
   var networkStatusEl = null;
   var networkDotEl = null;
   var networkLabelEl = null;
@@ -26,6 +27,8 @@ var SkyTrackerAircraft = (function () {
   // --- State ---
   var selectedIcao = null;
   var aircraftMap = {};  // icao -> aircraft object for quick lookup
+  var sourceFilter = 'all';
+  var lastAircraftData = null;  // cached for re-render on filter change
 
   function init() {
     // Cache DOM elements
@@ -41,9 +44,25 @@ var SkyTrackerAircraft = (function () {
     detailDistance = document.getElementById('detail-distance');
     detailRarityBadge = document.getElementById('detail-rarity-badge');
     detailRarityValue = document.getElementById('detail-rarity-value');
+    detailSource = document.getElementById('detail-source');
     networkStatusEl = document.getElementById('network-status');
     networkDotEl = networkStatusEl ? networkStatusEl.querySelector('.network-dot') : null;
     networkLabelEl = networkStatusEl ? networkStatusEl.querySelector('.network-label') : null;
+
+    // Source filter buttons
+    var filterBtns = document.querySelectorAll('.source-btn');
+    for (var i = 0; i < filterBtns.length; i++) {
+      filterBtns[i].addEventListener('click', function () {
+        sourceFilter = this.getAttribute('data-source');
+        for (var j = 0; j < filterBtns.length; j++) {
+          filterBtns[j].classList.remove('active');
+        }
+        this.classList.add('active');
+        if (lastAircraftData) {
+          handleAircraftUpdate(lastAircraftData);
+        }
+      });
+    }
 
     // Listen for aircraft data updates
     SkyTrackerWS.on('aircraft', handleAircraftUpdate);
@@ -57,6 +76,7 @@ var SkyTrackerAircraft = (function () {
 
   // --- Aircraft data update ---
   function handleAircraftUpdate(data) {
+    lastAircraftData = data;
     var aircraft = data.aircraft || [];
 
     // Build lookup map
@@ -74,12 +94,23 @@ var SkyTrackerAircraft = (function () {
       return da - db;
     });
 
-    renderList(aircraft);
+    // Apply source filter
+    var filtered = aircraft;
+    if (sourceFilter !== 'all') {
+      filtered = [];
+      for (var i = 0; i < aircraft.length; i++) {
+        if (aircraft[i].source === sourceFilter) {
+          filtered.push(aircraft[i]);
+        }
+      }
+    }
+
+    renderList(filtered);
 
     // Always show the closest aircraft in the detail panel
-    if (aircraft.length > 0) {
-      renderDetail(aircraft[0]);
-      SkyTrackerRadar.setSelected(aircraft[0].icao);
+    if (filtered.length > 0) {
+      renderDetail(filtered[0]);
+      SkyTrackerRadar.setSelected(filtered[0].icao);
     } else {
       clearSelection();
     }
@@ -114,6 +145,20 @@ var SkyTrackerAircraft = (function () {
     row.addEventListener('click', function () {
       selectAircraft(ac.icao);
     });
+
+    // Source column
+    var colSrc = document.createElement('span');
+    colSrc.className = 'col-src';
+    var srcBadge = document.createElement('span');
+    srcBadge.className = 'source-badge';
+    if (ac.source === 'uat') {
+      srcBadge.className += ' uat';
+      srcBadge.textContent = 'UAT';
+    } else {
+      srcBadge.textContent = 'ADS';
+    }
+    colSrc.appendChild(srcBadge);
+    row.appendChild(colSrc);
 
     // Callsign column (with optional rarity badge)
     var colCallsign = document.createElement('span');
@@ -169,6 +214,15 @@ var SkyTrackerAircraft = (function () {
 
     detailCallsign.textContent = ac.callsign || ac.registration || ac.icao || '---';
     detailCallsign.style.color = SkyTrackerRadar.getAltitudeColor(ac.altitude);
+
+    // Source badge
+    if (ac.source === 'uat') {
+      detailSource.textContent = 'UAT';
+      detailSource.className = 'detail-source uat';
+    } else {
+      detailSource.textContent = 'ADS-B';
+      detailSource.className = 'detail-source';
+    }
 
     var typeText = ac.type_name || ac.type_code || '';
     if (ac.registration) typeText += ' · ' + ac.registration;

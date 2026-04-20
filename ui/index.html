@@ -40,6 +40,7 @@
         <div class="detail-content hidden" id="detail-content">
           <div class="detail-header">
             <div class="detail-callsign" id="detail-callsign"></div>
+            <div class="detail-source" id="detail-source"></div>
             <div class="detail-rarity-badge hidden" id="detail-rarity-badge">
               <span class="rarity-star">&#9733;</span>
               <span class="rarity-value" id="detail-rarity-value"></span>
@@ -73,9 +74,15 @@
       <div class="list-panel" id="list-panel">
         <div class="list-header">
           <span class="list-title">TRAFFIC</span>
+          <div class="source-filters">
+            <button class="source-btn active" data-source="all">ALL</button>
+            <button class="source-btn" data-source="1090es">ADS-B</button>
+            <button class="source-btn" data-source="uat">UAT</button>
+          </div>
           <span class="list-sort">by distance</span>
         </div>
         <div class="list-columns">
+          <span class="col-src">SRC</span>
           <span class="col-callsign">CALLSIGN</span>
           <span class="col-type">TYPE</span>
           <span class="col-alt">ALT</span>
